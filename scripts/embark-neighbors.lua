@@ -721,10 +721,18 @@ function scan_neighbors()
     local t_max_x = t_min_x + 15
     local t_max_y = t_min_y + 15
 
-    local has_embark_rect = (emb_min_x and emb_min_y and emb_max_x and emb_max_y and emb_min_x >= 0 and emb_min_y >= 0)
+    local is_embark_on_cursor = false
+    if emb_min_x and emb_min_y and emb_max_x and emb_max_y and emb_min_x >= 0 and emb_min_y >= 0 then
+        local emb_reg_x = math.floor(emb_min_x / 16)
+        local emb_reg_y = math.floor(emb_min_y / 16)
+        if emb_reg_x == world_x and emb_reg_y == world_y then
+            is_embark_on_cursor = true
+        end
+    end
+
     for _, site in ipairs(sites) do
         local overlap_area = 0
-        if has_embark_rect then
+        if is_embark_on_cursor then
             local ox1 = math.max(emb_min_x, site.global_min_x)
             local ox2 = math.min(emb_max_x, site.global_max_x)
             local oy1 = math.max(emb_min_y, site.global_min_y)
@@ -737,7 +745,7 @@ function scan_neighbors()
         local in_pos = (site.pos.x == world_x and site.pos.y == world_y)
 
         local is_candidate = false
-        if has_embark_rect then
+        if is_embark_on_cursor then
             if overlap_area > 0 then
                 is_candidate = true
             elseif in_pos and (site.type == df.world_site_type.Monument or site.type == df.world_site_type.Camp or site.type == df.world_site_type.Cave or site.type == df.world_site_type.LairShrine or site.type == df.world_site_type.Vault) then

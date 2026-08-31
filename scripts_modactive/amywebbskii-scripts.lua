@@ -16,11 +16,10 @@ local TOOLS = {
         category = 'embark',
         desc = 'interactive gui table on the embark screen showing accurate population slice estimations, civ races, site types, conflict status, and travel distances.',
         enable = function()
-            -- overlay or script availability
-            pcall(dfhack.run_command, 'overlay', 'enable', 'embark-neighbors/overlay')
+            pcall(dfhack.run_command, 'keybinding', 'add', 'N@choose_start_site', 'neighbors')
         end,
         disable = function()
-            pcall(dfhack.run_command, 'overlay', 'disable', 'embark-neighbors/overlay')
+            pcall(dfhack.run_command, 'keybinding', 'clear', 'N@choose_start_site')
         end,
         run = function()
             dfhack.run_command('neighbors')
