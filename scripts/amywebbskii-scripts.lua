@@ -1,53 +1,184 @@
--- amywebbskii-scripts: interactive suite switchboard & QoL utilities for Dwarf Fortress
+-- amywebbskii-scripts: interactive switchboard, auto-run manager, and QoL utilities for Dwarf Fortress
 --@module = true
 
 local gui = require('gui')
 local widgets = require('gui.widgets')
+local json = require('json')
+
+local CONFIG_PATH = 'dfhack-config/amywebbskii-scripts.json'
+local INIT_PATH = dfhack.getDFPath() .. '/dfhack-config/init/onMapLoad.init'
 
 local TOOLS = {
     {
         key = 'embark-neighbors',
         name = 'Embark Neighbors',
         cmd = 'neighbors',
-        desc = 'Interactive GUI table on the embark screen showing accurate population slice estimations, civ races, site types, conflict status, and travel distances.',
         category = 'embark',
+        desc = 'Interactive GUI table on the embark screen showing accurate population slice estimations, civ races, site types, conflict status, and travel distances.',
+        enable = function()
+            -- overlay or script availability
+            pcall(dfhack.run_command, 'overlay', 'enable', 'embark-neighbors/overlay')
+        end,
+        disable = function()
+            pcall(dfhack.run_command, 'overlay', 'disable', 'embark-neighbors/overlay')
+        end,
+        run = function()
+            dfhack.run_command('neighbors')
+        end,
     },
     {
         key = 'choose-your-hermit',
         name = 'Choose Your Hermit',
         cmd = 'choose_hermit',
-        desc = 'Select a specific dwarf from your starting seven to embark as a lone hermit, dismissing the others.',
         category = 'fort',
+        desc = 'Select a specific dwarf from your starting seven to embark as a lone hermit, dismissing the others.',
+        enable = function()
+            if not dfhack.isMapLoaded() then return end
+            pcall(dfhack.run_command, 'enable', 'hermit')
+        end,
+        disable = function()
+            pcall(dfhack.run_command, 'disable', 'hermit')
+        end,
+        run = function()
+            dfhack.run_command('choose_hermit')
+        end,
     },
     {
         key = 'wagonless-hermit',
         name = 'Wagonless Hermit',
         cmd = 'hermit-no-wagon',
-        desc = 'Suppresses the embark wagon and excess draft animals for a true wilderness hermit survival experience.',
         category = 'fort',
+        desc = 'Suppresses the embark wagon and excess draft animals for a true wilderness hermit survival experience.',
+        enable = function()
+            if not dfhack.isMapLoaded() then return end
+            pcall(dfhack.run_command, 'hermit-no-wagon')
+        end,
+        disable = function()
+            -- wagonless is a one-time start cleanup
+        end,
+        run = function()
+            dfhack.run_command('hermit-no-wagon')
+        end,
     },
     {
         key = 'claim-foreign-items',
         name = 'Claim Foreign Items',
         cmd = 'claim_foreign_items',
-        desc = 'Automatically or manually reclaims external items dropped by visiting caravans, merchants, and siegers.',
         category = 'fort',
+        desc = 'Automatically or manually reclaims external items dropped by visiting caravans, merchants, and siegers.',
+        enable = function()
+            if not dfhack.isMapLoaded() then return end
+            pcall(dfhack.run_command, 'claim_foreign_items', '--auto')
+        end,
+        disable = function()
+            pcall(dfhack.run_command, 'claim_foreign_items', '--stop')
+        end,
+        run = function()
+            dfhack.run_command('claim_foreign_items', '--force')
+        end,
     },
     {
         key = 'slow-digging',
         name = 'Slow Digging',
         cmd = 'slow_digging',
-        desc = 'Slows down raw mining speed by a configurable multiplier to give fortress expansion weight and deliberate pacing.',
         category = 'fort',
+        desc = 'Slows down raw mining speed by a configurable multiplier to give fortress expansion weight and deliberate pacing.',
+        enable = function()
+            if not dfhack.isMapLoaded() then return end
+            pcall(dfhack.run_command, 'enable', 'slow-digging')
+        end,
+        disable = function()
+            pcall(dfhack.run_command, 'disable', 'slow-digging')
+        end,
+        run = function()
+            dfhack.run_command('slow_digging')
+        end,
     },
 }
 
+-- ---- configuration & persistence --------------------------------------------
+local function load_config()
+    local cfg = json.open(CONFIG_PATH)
+    if not cfg.data or type(cfg.data) ~= 'table' then
+        cfg.data = {}
+    end
+    -- default all tools to enabled (true) if unconfigured
+    for _, t in ipairs(TOOLS) do
+        if cfg.data[t.key] == nil then
+            cfg.data[t.key] = true
+        end
+    end
+    return cfg
+end
+
+local function is_on(key)
+    local cfg = load_config()
+    return cfg.data[key] == true
+end
+
+local function set_on(key, enabled)
+    local cfg = load_config()
+    cfg.data[key] = enabled and true or false
+    cfg:write()
+end
+
+local function set_autostart(arm)
+    local lines = {}
+    local f = io.open(INIT_PATH, 'r')
+    if f then
+        for line in f:lines() do
+            if not line:match('^%s*amywebbskii%-scripts') then
+                lines[#lines + 1] = line
+            end
+        end
+        f:close()
+    end
+    if arm then
+        lines[#lines + 1] = 'amywebbskii-scripts apply'
+    end
+    local w = io.open(INIT_PATH, 'w')
+    if not w then return false end
+    w:write(table.concat(lines, '\n'))
+    if #lines > 0 then w:write('\n') end
+    w:close()
+    return true
+end
+
+local function mode_active(m)
+    if m == 'any' or m == 'embark' then return true end
+    if m == 'fort' then return dfhack.world.isFortressMode() and dfhack.isMapLoaded() end
+    return true
+end
+
+local function apply_tool(tool)
+    if not mode_active(tool.category) then return end
+    if is_on(tool.key) then
+        if tool.enable then
+            local ok, err = pcall(tool.enable)
+            if not ok then print(('amywebbskii-scripts: enable error on %s: %s'):format(tool.name, tostring(err))) end
+        end
+    else
+        if tool.disable then
+            local ok, err = pcall(tool.disable)
+            if not ok then print(('amywebbskii-scripts: disable error on %s: %s'):format(tool.name, tostring(err))) end
+        end
+    end
+end
+
+local function apply_all()
+    print('amywebbskii-scripts: applying autorun selection...')
+    for _, tool in ipairs(TOOLS) do
+        apply_tool(tool)
+    end
+end
+
+-- ---- GUI --------------------------------------------------------------------
 AmyWindow = defclass(AmyWindow, widgets.Window)
 AmyWindow.ATTRS{
     frame_title = 'amywebbskii-scripts',
-    frame = {w = 78, h = 26},
+    frame = {w = 80, h = 26},
     resizable = true,
-    resize_min = {w = 60, h = 18},
+    resize_min = {w = 64, h = 20},
 }
 
 function AmyWindow:init()
@@ -56,23 +187,17 @@ function AmyWindow:init()
             frame = {l = 0, t = 0},
             text = {
                 {text = 'Amywebbskii Scripts Suite', pen = COLOR_LIGHTCYAN},
-                {text = ' (DFHack QoL & Fortress Utilities)', pen = COLOR_GREY},
-            },
-        },
-        widgets.Label{
-            frame = {l = 0, t = 1},
-            text = {
-                {text = 'Select a tool to view details or execute:', pen = COLOR_DARKGREY},
+                {text = '  (Click / Enter to toggle [x] autorun)', pen = COLOR_GREY},
             },
         },
         widgets.List{
             view_id = 'tool_list',
-            frame = {l = 0, t = 3, w = 32, b = 0},
+            frame = {l = 0, t = 2, w = 32, b = 2},
             on_select = function(_, choice) self:show_tool(choice.item) end,
-            on_submit = function(_, choice) self:run_tool(choice.item) end,
+            on_submit = function(_, choice) self:toggle_tool(choice.item) end,
         },
         widgets.Panel{
-            frame = {l = 34, t = 3, r = 0, b = 0},
+            frame = {l = 34, t = 2, r = 0, b = 2},
             subviews = {
                 widgets.Label{
                     view_id = 'tool_title',
@@ -80,27 +205,40 @@ function AmyWindow:init()
                     text = '',
                 },
                 widgets.Label{
-                    view_id = 'tool_cmd',
+                    view_id = 'tool_state',
                     frame = {l = 0, t = 1},
                     text = '',
                 },
                 widgets.Label{
+                    view_id = 'tool_cmd',
+                    frame = {l = 0, t = 2},
+                    text = '',
+                },
+                widgets.Label{
                     view_id = 'tool_desc',
-                    frame = {l = 0, t = 3, r = 0},
+                    frame = {l = 0, t = 4, r = 0},
                     auto_height = true,
                     text = '',
                 },
-                widgets.HotkeyLabel{
-                    frame = {l = 0, b = 0},
-                    key = 'SELECT',
-                    label = 'Run tool command',
-                    on_activate = function()
-                        local list = self.subviews.tool_list
-                        local choice = list:getSelected()
-                        if choice and choice.item then self:run_tool(choice.item) end
-                    end,
-                },
             },
+        },
+        widgets.HotkeyLabel{
+            frame = {l = 0, b = 0},
+            key = 'SELECT',
+            label = 'Toggle Autorun [x]',
+            on_activate = function()
+                local choice = self.subviews.tool_list:getSelected()
+                if choice and choice.item then self:toggle_tool(choice.item) end
+            end,
+        },
+        widgets.HotkeyLabel{
+            frame = {l = 28, b = 0},
+            key = 'CUSTOM_R',
+            label = 'Run Manually Now',
+            on_activate = function()
+                local choice = self.subviews.tool_list:getSelected()
+                if choice and choice.item then self:run_tool(choice.item) end
+            end,
         },
     }
     self:refresh()
@@ -110,29 +248,62 @@ function AmyWindow:refresh()
     local list = self.subviews.tool_list
     local choices = {}
     for _, tool in ipairs(TOOLS) do
+        local on = is_on(tool.key)
         table.insert(choices, {
-            text = tool.name,
+            text = {
+                {text = on and '[x] ' or '[ ] ', pen = on and COLOR_LIGHTGREEN or COLOR_DARKGREY},
+                {text = tool.name, pen = on and COLOR_WHITE or COLOR_GREY},
+            },
             item = tool,
         })
     end
-    list:setChoices(choices)
-    if #TOOLS > 0 then self:show_tool(TOOLS[1]) end
+    local prev_idx = list:getSelected() and list.selected or 1
+    list:setChoices(choices, prev_idx)
+    local cur = list:getSelected()
+    if cur and cur.item then
+        self:show_tool(cur.item)
+    elseif #TOOLS > 0 then
+        self:show_tool(TOOLS[1])
+    end
+end
+
+function AmyWindow:toggle_tool(tool)
+    if not tool then return end
+    local new_state = not is_on(tool.key)
+    set_on(tool.key, new_state)
+    apply_tool(tool)
+    self:refresh()
 end
 
 function AmyWindow:show_tool(tool)
     if not tool then return end
-    self.subviews.tool_title:setText({{text = tool.name, pen = COLOR_WHITE}})
+    local on = is_on(tool.key)
+    self.subviews.tool_title:setText({
+        {text = tool.name, pen = COLOR_WHITE},
+        {text = ('  [%s]'):format(tool.category:upper()), pen = COLOR_LIGHTCYAN},
+    })
+    self.subviews.tool_state:setText({
+        {text = 'Autorun on load: ', pen = COLOR_DARKGREY},
+        {
+            text = on and 'ENABLED [x]' or 'DISABLED [ ]',
+            pen = on and COLOR_LIGHTGREEN or COLOR_RED,
+        },
+    })
     self.subviews.tool_cmd:setText({
         {text = 'Command: ', pen = COLOR_DARKGREY},
-        {text = tool.cmd, pen = COLOR_LIGHTGREEN},
+        {text = tool.cmd, pen = COLOR_LIGHTYELLOW},
     })
     self.subviews.tool_desc:setText(tool.desc)
 end
 
 function AmyWindow:run_tool(tool)
     if not tool then return end
-    print(('amywebbskii-scripts: executing `%s`...'):format(tool.cmd))
-    dfhack.run_command(tool.cmd)
+    print(('amywebbskii-scripts: manually executing `%s`...'):format(tool.cmd))
+    if tool.run then
+        tool.run()
+    else
+        dfhack.run_command(tool.cmd)
+    end
 end
 
 AmyScreen = defclass(AmyScreen, gui.ZScreen)
@@ -146,14 +317,35 @@ function AmyScreen:onDismiss()
     view = nil
 end
 
-local arg = ({...})[1]
-if arg == 'help' or arg == '-h' or arg == '--help' then
-    print('amywebbskii-scripts: QoL suite and launcher')
-    print('Available tools:')
+-- ---- entry point ------------------------------------------------------------
+local args = {...}
+local cmd_arg = args[1]
+
+if cmd_arg == 'apply' then
+    apply_all()
+    set_autostart(true)
+    return
+elseif cmd_arg == 'status' then
+    print('amywebbskii-scripts configuration status:')
     for _, t in ipairs(TOOLS) do
-        print(string.format('  %-22s (%s) - %s', t.cmd, t.category, t.name))
+        local on = is_on(t.key)
+        print(string.format('  [%s] %-22s (%s) - cmd: %s', on and 'x' or ' ', t.name, t.category, t.cmd))
     end
+    return
+elseif cmd_arg == 'enable' and args[2] then
+    set_on(args[2], true)
+    print(('amywebbskii-scripts: enabled %s'):format(args[2]))
+    set_autostart(true)
+    return
+elseif cmd_arg == 'disable' and args[2] then
+    set_on(args[2], false)
+    print(('amywebbskii-scripts: disabled %s'):format(args[2]))
+    return
+elseif cmd_arg == 'help' or cmd_arg == '-h' or cmd_arg == '--help' then
+    print('Usage: amywebbskii-scripts [apply|status|enable <key>|disable <key>|help]')
+    print('Without arguments: opens the interactive switchboard GUI.')
     return
 end
 
+set_autostart(true)
 view = view and view:raise() or AmyScreen{}:show()
