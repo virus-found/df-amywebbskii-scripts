@@ -227,7 +227,7 @@ function AmyWindow:init()
             key = 'SELECT',
             label = 'Toggle Autorun [x]',
             on_activate = function()
-                local choice = self.subviews.tool_list:getSelected()
+                local _, choice = self.subviews.tool_list:getSelected()
                 if choice and choice.item then self:toggle_tool(choice.item) end
             end,
         },
@@ -236,7 +236,7 @@ function AmyWindow:init()
             key = 'CUSTOM_R',
             label = 'Run Manually Now',
             on_activate = function()
-                local choice = self.subviews.tool_list:getSelected()
+                local _, choice = self.subviews.tool_list:getSelected()
                 if choice and choice.item then self:run_tool(choice.item) end
             end,
         },
@@ -257,9 +257,9 @@ function AmyWindow:refresh()
             item = tool,
         })
     end
-    local prev_idx = list:getSelected() and list.selected or 1
+    local prev_idx = list.selected or 1
     list:setChoices(choices, prev_idx)
-    local cur = list:getSelected()
+    local _, cur = list:getSelected()
     if cur and cur.item then
         self:show_tool(cur.item)
     elseif #TOOLS > 0 then
