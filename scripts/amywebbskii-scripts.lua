@@ -11,10 +11,10 @@ local INIT_PATH = dfhack.getDFPath() .. '/dfhack-config/init/onMapLoad.init'
 local TOOLS = {
     {
         key = 'embark-neighbors',
-        name = 'Embark Neighbors',
+        name = 'embark neighbors',
         cmd = 'neighbors',
         category = 'embark',
-        desc = 'Interactive GUI table on the embark screen showing accurate population slice estimations, civ races, site types, conflict status, and travel distances.',
+        desc = 'interactive gui table on the embark screen showing accurate population slice estimations, civ races, site types, conflict status, and travel distances.',
         enable = function()
             -- overlay or script availability
             pcall(dfhack.run_command, 'overlay', 'enable', 'embark-neighbors/overlay')
@@ -28,10 +28,10 @@ local TOOLS = {
     },
     {
         key = 'choose-your-hermit',
-        name = 'Choose Your Hermit',
+        name = 'choose your hermit',
         cmd = 'choose_hermit',
         category = 'fort',
-        desc = 'Select a specific dwarf from your starting seven to embark as a lone hermit, dismissing the others.',
+        desc = 'select a specific dwarf from your starting seven to embark as a lone hermit, dismissing the others.',
         enable = function()
             if not dfhack.isMapLoaded() then return end
             pcall(dfhack.run_command, 'enable', 'hermit')
@@ -45,10 +45,10 @@ local TOOLS = {
     },
     {
         key = 'wagonless-hermit',
-        name = 'Wagonless Hermit',
+        name = 'wagonless hermit',
         cmd = 'hermit-no-wagon',
         category = 'fort',
-        desc = 'Suppresses the embark wagon and excess draft animals for a true wilderness hermit survival experience.',
+        desc = 'suppresses the embark wagon and excess draft animals for a true wilderness hermit survival experience.',
         enable = function()
             if not dfhack.isMapLoaded() then return end
             pcall(dfhack.run_command, 'hermit-no-wagon')
@@ -62,10 +62,10 @@ local TOOLS = {
     },
     {
         key = 'claim-foreign-items',
-        name = 'Claim Foreign Items',
+        name = 'claim foreign items',
         cmd = 'claim_foreign_items',
         category = 'fort',
-        desc = 'Automatically or manually reclaims external items dropped by visiting caravans, merchants, and siegers.',
+        desc = 'automatically or manually reclaims external items dropped by visiting caravans, merchants, and siegers.',
         enable = function()
             if not dfhack.isMapLoaded() then return end
             pcall(dfhack.run_command, 'claim_foreign_items', '--auto')
@@ -79,10 +79,10 @@ local TOOLS = {
     },
     {
         key = 'slow-digging',
-        name = 'Slow Digging',
+        name = 'slow digging',
         cmd = 'slow_digging',
         category = 'fort',
-        desc = 'Slows down raw mining speed by a configurable multiplier to give fortress expansion weight and deliberate pacing.',
+        desc = 'slows down raw mining speed by a configurable multiplier to give fortress expansion weight and deliberate pacing.',
         enable = function()
             if not dfhack.isMapLoaded() then return end
             pcall(dfhack.run_command, 'enable', 'slow-digging')
@@ -208,8 +208,8 @@ function AmyWindow:init()
         widgets.Label{
             frame = {l = 0, t = 0},
             text = {
-                {text = 'Amywebbskii Scripts Suite', pen = COLOR_LIGHTCYAN},
-                {text = '  (DFHack QoL & Fortress Utilities)', pen = COLOR_GREY},
+                {text = 'amywebbskii scripts suite', pen = COLOR_LIGHTCYAN},
+                {text = '  (dfhack qol & fortress utilities)', pen = COLOR_GREY},
             },
         },
         widgets.List{
@@ -241,7 +241,7 @@ function AmyWindow:init()
         widgets.HotkeyLabel{
             frame = {l = 0, b = 0},
             key = 'CUSTOM_T',
-            label = 'Toggle Autorun',
+            label = 'toggle autorun',
             on_activate = function()
                 local _, choice = self.subviews.tool_list:getSelected()
                 if choice and choice.item then self:toggle_tool(choice.item) end
@@ -250,7 +250,7 @@ function AmyWindow:init()
         widgets.HotkeyLabel{
             frame = {l = 22, b = 0},
             key = 'CUSTOM_R',
-            label = 'Run Manually Now',
+            label = 'run manually now',
             on_activate = function()
                 local _, choice = self.subviews.tool_list:getSelected()
                 if choice and choice.item then self:run_tool(choice.item) end
@@ -316,7 +316,7 @@ function AmyWindow:show_tool(tool)
         {text = ('  [%s]'):format(tool.category:upper()), pen = COLOR_LIGHTCYAN},
     })
     self.subviews.tool_cmd:setText({
-        {text = 'Command: ', pen = COLOR_DARKGREY},
+        {text = 'command: ', pen = COLOR_DARKGREY},
         {text = tool.cmd, pen = COLOR_LIGHTYELLOW},
     })
     local desc_w = math.max(36, self.frame.w - 38)
@@ -369,8 +369,8 @@ elseif cmd_arg == 'disable' and args[2] then
     print(('amywebbskii-scripts: disabled %s'):format(args[2]))
     return
 elseif cmd_arg == 'help' or cmd_arg == '-h' or cmd_arg == '--help' then
-    print('Usage: amywebbskii-scripts [apply|status|enable <key>|disable <key>|help]')
-    print('Without arguments: opens the interactive switchboard GUI.')
+    print('usage: amywebbskii-scripts [apply|status|enable <key>|disable <key>|help]')
+    print('without arguments: opens the interactive switchboard gui.')
     return
 end
 
