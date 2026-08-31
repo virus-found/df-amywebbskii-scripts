@@ -700,12 +700,12 @@ function scan_neighbors()
         if total_site_area > emb_area then
             local ratio = math.min(1.0, emb_area / total_site_area)
             local nem_count = (best_site.populace and best_site.populace.nemesis) and #best_site.populace.nemesis or 0
-            local raw_slice = math.max(nem_count + 10, math.floor(total_site_pop * math.sqrt(ratio)))
+            local raw_slice = math.max(nem_count, math.floor(total_site_pop * math.sqrt(ratio)))
             if raw_slice >= (max_engine_spawn + nem_count) then
                 emb_slice_pop = max_engine_spawn + nem_count
                 hit_cap = true
             else
-                emb_slice_pop = raw_slice
+                emb_slice_pop = math.min(total_site_pop, raw_slice)
             end
         elseif emb_slice_pop >= max_engine_spawn then
             hit_cap = true
