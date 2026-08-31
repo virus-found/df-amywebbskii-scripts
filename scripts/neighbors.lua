@@ -321,20 +321,26 @@ local function estimate_spawn_population(stype, raw_pop, history_pop, site)
     return format_est_pop(est)
 end
 
--- calculates site category priority (civilized towns/fortresses take precedence over monuments)
+-- calculates site category priority (dungeons, monuments, fortresses take precedence over temporary camps)
 local function get_site_category_priority(site)
     if not site then return 0 end
     local t = site.type
-    if t == df.world_site_type.Town or t == df.world_site_type.DarkFortress or t == df.world_site_type.MountainHalls or t == df.world_site_type.Fortress or t == df.world_site_type.Castle or t == df.world_site_type.Retreat then
+    if t == df.world_site_type.Monument then
+        return 100 -- Ancient monuments / mysterious dungeons highlighted by DF UI
+    elseif t == df.world_site_type.Vault then
+        return 100
+    elseif t == df.world_site_type.DarkFortress or t == df.world_site_type.Fortress or t == df.world_site_type.Castle or t == df.world_site_type.Tower then
+        return 90
+    elseif t == df.world_site_type.MountainHalls or t == df.world_site_type.Town then
+        return 80
+    elseif t == df.world_site_type.Retreat or t == df.world_site_type.Cave or t == df.world_site_type.LairShrine or t == df.world_site_type.Tomb then
+        return 70
+    elseif t == df.world_site_type.Hamlet or t == df.world_site_type.Hillock or t == df.world_site_type.DarkPits then
         return 50
-    elseif t == df.world_site_type.Hamlet or t == df.world_site_type.Hillock or t == df.world_site_type.Camp or t == df.world_site_type.DarkPits then
-        return 40
-    elseif t == df.world_site_type.Cave or t == df.world_site_type.LairShrine or t == df.world_site_type.Vault then
-        return 20
-    elseif t == df.world_site_type.Monument or t == df.world_site_type.Tomb then
-        return 10
+    elseif t == df.world_site_type.Camp then
+        return 20 -- Temporary camps are subordinate to prominent structures
     else
-        return 30
+        return 40
     end
 end
 
@@ -345,7 +351,9 @@ local function format_site_type(site)
     if not raw_t then return "" end
     local t_str = tostring(raw_t):lower():gsub("_", " ")
 
-    if site.type == df.world_site_type.Town or t_str:find("town") then
+    if site.type == df.world_site_type.Monument or t_str:find("monument") then
+        return "dungeon"
+    elseif site.type == df.world_site_type.Town or t_str:find("town") then
         local b_cnt = site.buildings and #site.buildings or 0
         if b_cnt <= 1 then
             return "hamlet"
@@ -790,73 +798,89 @@ function scan_neighbors()
         end
     end
 
-    -- B. Always represent local site under cursor at dist = 0 ("here")
-    if best_site and site_owner_entity then
-        local eff_cursor_civ = get_effective_civ(site_owner_entity) or site_owner_entity
-        local best_site_name = dfhack.translation.translateName(best_site.name, true)
-        local cur_is_tower = (site_owner_entity.type == df.historical_entity_type.Tower) or
-                             (site_owner_entity.entity_raw and site_owner_entity.entity_raw.code:find("TOWER")) or
-                             (best_site.type == df.world_site_type.Tower or best_site.type == df.world_site_type.Vault)
-        local oname = cur_is_tower and "Tower" or dfhack.translation.translateName(eff_cursor_civ.name, true)
-        local orace = cur_is_tower and "tower" or format_entity_race(eff_cursor_civ)
-        local status_str, status_pen = get_diplomatic_status(eff_cursor_civ, player_civ, nil)
-        if cur_is_tower then
-            status_str = "hostile"
-            status_pen = COLOR_LIGHTRED
-        end
-        local stype = format_site_type(best_site)
-        local hist_pop = format_population(total_site_pop or 0)
-        if hist_pop == "" then hist_pop = "few" end
-
-        local found_entry = nil
-        for _, ent in ipairs(entries) do
-            if (ent.sname and ent.sname == best_site_name) or (ent.travel_str == "here" or ent.dist == 0) then
-                found_entry = ent
-                break
+    -- B. Always represent all local candidate sites matching cursor tile
+    for _, cand in ipairs(candidate_sites) do
+        local site = cand.site
+        local site_owner = get_site_active_occupant(site) or df.historical_entity.find(site.cur_owner_id) or df.historical_entity.find(site.civ_id)
+        if site and site_owner then
+            local eff_civ = get_effective_civ(site_owner) or site_owner
+            local sname = dfhack.translation.translateName(site.name, true)
+            local is_tower = (site_owner.type == df.historical_entity_type.Tower) or
+                             (site_owner.entity_raw and site_owner.entity_raw.code:find("TOWER")) or
+                             (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault)
+            local oname = is_tower and "Tower" or dfhack.translation.translateName(eff_civ.name, true)
+            local orace = is_tower and "tower" or format_entity_race(eff_civ)
+            local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
+            if is_tower then
+                status_str = "hostile"
+                status_pen = COLOR_LIGHTRED
             end
-        end
+            local stype = format_site_type(site)
+            local site_live_pop = get_site_actual_live_pop(site, stype) or 0
+            local hist_pop = format_population(site_live_pop)
+            if hist_pop == "" then hist_pop = "few" end
 
-        if found_entry then
-            found_entry.sname = best_site_name
-            found_entry.stype = stype
-            found_entry.est_pop = pop_fmt
-            if found_entry.dist == 0 then
-                found_entry.travel_str = "here"
+            local is_primary = (best_site and site.id == best_site.id)
+            local cand_pop_fmt = format_est_pop(site_live_pop)
+            if is_primary then
+                cand_pop_fmt = pop_fmt
             end
-        else
-            table.insert(entries, {
-                civ = eff_cursor_civ,
-                rname = orace,
-                cname = oname,
-                sname = best_site_name,
-                stype = stype,
-                dist = 0,
-                travel_str = "here",
-                history_pop = hist_pop,
-                est_pop = pop_fmt,
-                war_str = "",
-                direction = "here",
-                status = status_str,
-                status_pen = status_pen,
-                war_with_site = false,
-            })
+
+            local dist_val = 0
+            local t_str = "here"
+            if not is_primary and cand.dist and cand.dist > 0.05 then
+                dist_val = cand.dist
+                local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y)
+                t_str = format_travel_time(math.floor(cand.dist * 10), dir)
+                if t_str == "" then t_str = "here" end
+            end
+
+            local found_entry = nil
+            for _, ent in ipairs(entries) do
+                if ent.sname == sname and ent.rname == orace then
+                    found_entry = ent
+                    break
+                end
+            end
+
+            if found_entry then
+                found_entry.sname = sname
+                found_entry.stype = stype
+                found_entry.est_pop = cand_pop_fmt
+                if is_primary then
+                    found_entry.dist = 0
+                    found_entry.travel_str = "here"
+                    found_entry.is_primary_site = true
+                end
+            else
+                table.insert(entries, {
+                    civ = eff_civ,
+                    rname = orace,
+                    cname = oname,
+                    sname = sname,
+                    stype = stype,
+                    dist = dist_val,
+                    travel_str = t_str,
+                    history_pop = hist_pop,
+                    est_pop = cand_pop_fmt,
+                    war_str = "",
+                    direction = is_primary and "here" or calculate_direction(world_x, world_y, site.pos.x, site.pos.y),
+                    status = status_str,
+                    status_pen = status_pen,
+                    war_with_site = false,
+                    is_primary_site = is_primary,
+                })
+            end
         end
     end
 
-    -- D. Deduplicate entries: ensure only one "here" entry and no duplicate site/civ rows
+    -- D. Deduplicate entries: ensure no duplicate site/civ rows
     local unique_entries = {}
     local seen_keys = {}
-    local seen_here = false
 
     for _, ent in ipairs(entries) do
-        local is_here = (ent.travel_str == "here" or ent.dist == 0)
-        local key = string.format("%s|%s|%s", ent.sname or "", ent.rname or "", ent.travel_str or "")
-        if is_here then
-            if not seen_here then
-                seen_here = true
-                table.insert(unique_entries, ent)
-            end
-        elseif not seen_keys[key] then
+        local key = string.format("%s|%s|%s|%s", ent.sname or "", ent.stype or "", ent.rname or "", ent.travel_str or "")
+        if not seen_keys[key] then
             seen_keys[key] = true
             table.insert(unique_entries, ent)
         end
@@ -864,12 +888,21 @@ function scan_neighbors()
     entries = unique_entries
 
     table.sort(entries, function(a, b)
+        if a.is_primary_site ~= b.is_primary_site then
+            return a.is_primary_site == true
+        end
         local a_here = (a.travel_str == "here" or a.dist == 0)
         local b_here = (b.travel_str == "here" or b.dist == 0)
-        if a_here and not b_here then return true end
-        if b_here and not a_here then return false end
-        if a.dist ~= b.dist then return a.dist < b.dist end
-        return a.sname < b.sname
+        if a_here ~= b_here then
+            return a_here
+        end
+        if a.dist ~= b.dist then
+            return a.dist < b.dist
+        end
+        if a.sname and b.sname and a.sname ~= b.sname then
+            return a.sname < b.sname
+        end
+        return (a.rname or "") < (b.rname or "")
     end)
 
     return {
