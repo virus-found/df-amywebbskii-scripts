@@ -721,45 +721,50 @@ function scan_neighbors()
     local t_max_x = t_min_x + 15
     local t_max_y = t_min_y + 15
 
+    local has_embark_rect = (emb_min_x and emb_min_y and emb_max_x and emb_max_y and emb_min_x >= 0 and emb_min_y >= 0)
     for _, site in ipairs(sites) do
         local overlap_area = 0
-        if emb_min_x and emb_min_y and emb_max_x and emb_max_y and emb_min_x >= 0 and emb_min_y >= 0 then
-            local emb_reg_x = math.floor(emb_min_x / 16)
-            local emb_reg_y = math.floor(emb_min_y / 16)
-            if emb_reg_x == world_x and emb_reg_y == world_y then
-                local ox1 = math.max(emb_min_x, site.global_min_x)
-                local ox2 = math.min(emb_max_x, site.global_max_x)
-                local oy1 = math.max(emb_min_y, site.global_min_y)
-                local oy2 = math.min(emb_max_y, site.global_max_y)
-                if ox2 >= ox1 and oy2 >= oy1 then
-                    overlap_area = (ox2 - ox1 + 1) * (oy2 - oy1 + 1)
-                end
+        if has_embark_rect then
+            local ox1 = math.max(emb_min_x, site.global_min_x)
+            local ox2 = math.min(emb_max_x, site.global_max_x)
+            local oy1 = math.max(emb_min_y, site.global_min_y)
+            local oy2 = math.min(emb_max_y, site.global_max_y)
+            if ox2 >= ox1 and oy2 >= oy1 then
+                overlap_area = (ox2 - ox1 + 1) * (oy2 - oy1 + 1)
             end
         end
 
-        local in_rect = not (t_max_x < site.global_min_x or t_min_x > site.global_max_x or
-                             t_max_y < site.global_min_y or t_min_y > site.global_max_y)
         local in_pos = (site.pos.x == world_x and site.pos.y == world_y)
-        local dist = math.sqrt((site.pos.x - world_x)^2 + (site.pos.y - world_y)^2)
 
-        if overlap_area > 0 or in_rect or in_pos or dist <= 0.75 then
+        local is_candidate = false
+        if has_embark_rect then
+            if overlap_area > 0 then
+                is_candidate = true
+            elseif in_pos and (site.type == df.world_site_type.Monument or site.type == df.world_site_type.Camp or site.type == df.world_site_type.Cave or site.type == df.world_site_type.LairShrine or site.type == df.world_site_type.Vault) then
+                is_candidate = true
+            end
+        else
+            if in_pos then
+                is_candidate = true
+            end
+        end
+
+        if is_candidate then
             local prio = get_site_category_priority(site)
             table.insert(candidate_sites, {
                 site = site,
                 prio = prio,
                 overlap_area = overlap_area,
-                in_rect = in_rect,
                 in_pos = in_pos,
-                dist = dist
+                dist = (in_pos and 0 or math.sqrt((site.pos.x - world_x)^2 + (site.pos.y - world_y)^2)),
             })
         end
     end
 
     if #candidate_sites > 0 then
         table.sort(candidate_sites, function(a, b)
-            if a.prio ~= b.prio then return a.prio > b.prio end
             if a.overlap_area ~= b.overlap_area then return a.overlap_area > b.overlap_area end
-            if a.in_rect ~= b.in_rect then return a.in_rect end
+            if a.prio ~= b.prio then return a.prio > b.prio end
             if a.in_pos ~= b.in_pos then return a.in_pos end
             return a.dist < b.dist
         end)
@@ -767,15 +772,15 @@ function scan_neighbors()
     end
 
     if best_site then
-        local sname = dfhack.translation.translateName(best_site.name, true)
-        local stype = format_site_type(best_site)
+        local sname = dfhack.translation.translateName(best_site.name, true):lower()
+        local stype = format_site_type(best_site):lower()
 
         local primary_entity = get_site_active_occupant(best_site) or df.historical_entity.find(best_site.cur_owner_id) or df.historical_entity.find(best_site.civ_id)
 
         if primary_entity then
             site_owner_entity = primary_entity
-            local cur_name = dfhack.translation.translateName(primary_entity.name, true)
-            local cur_race = format_entity_race(primary_entity)
+            local cur_name = dfhack.translation.translateName(primary_entity.name, true):lower()
+            local cur_race = format_entity_race(primary_entity):lower()
 
             local status_tag, _ = get_diplomatic_status(primary_entity, player_civ, nil)
             local status_note = ""
@@ -884,18 +889,20 @@ function scan_neighbors()
                     seen_entities[eff_key] = true
                     if site then seen_site_ids[site.id] = true end
 
-                    local cname = is_tower and "Tower" or dfhack.translation.translateName(eff_civ.name, true)
-                    local rname = is_tower and "tower" or format_entity_race(eff_civ)
-                    local sname = site and dfhack.translation.translateName(site.name, true) or (is_tower and "Tower" or "")
-                    local stype = site and format_site_type(site) or (is_tower and "tower" or "")
+                    local cname = is_tower and "tower" or dfhack.translation.translateName(eff_civ.name, true):lower()
+                    local rname = is_tower and "tower" or format_entity_race(eff_civ):lower()
+                    local sname = site and dfhack.translation.translateName(site.name, true):lower() or (is_tower and "tower" or "")
+                    local stype = site and format_site_type(site):lower() or (is_tower and "tower" or "")
 
-                    local dir = site and calculate_direction(world_x, world_y, site.pos.x, site.pos.y) or "here"
-                    local travel_str = format_travel_time(dist, dir)
+                    local dir = site and calculate_direction(world_x, world_y, site.pos.x, site.pos.y):lower() or "here"
+                    local travel_str = format_travel_time(dist, dir):lower()
 
                     local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, state)
                     if is_tower then
                         status_str = "hostile"
                         status_pen = COLOR_LIGHTRED
+                    else
+                        status_str = status_str:lower()
                     end
 
                     local war_with_site = false
@@ -906,8 +913,8 @@ function scan_neighbors()
                         war_with_site = true
                     end
 
-                    local history_pop = format_population(raw_pop)
-                    local est_pop = estimate_spawn_population(stype, raw_pop, history_pop, site)
+                    local history_pop = format_population(raw_pop):lower()
+                    local est_pop = estimate_spawn_population(stype, raw_pop, history_pop, site):lower()
                     local war_str = war_with_site and "war vs site" or ""
 
                     table.insert(entries, {
@@ -937,34 +944,36 @@ function scan_neighbors()
         local site_owner = get_site_active_occupant(site) or df.historical_entity.find(site.cur_owner_id) or df.historical_entity.find(site.civ_id)
         if site and site_owner then
             local eff_civ = get_effective_civ(site_owner) or site_owner
-            local sname = dfhack.translation.translateName(site.name, true)
+            local sname = dfhack.translation.translateName(site.name, true):lower()
             local is_tower = (site_owner.type == df.historical_entity_type.Tower) or
                              (site_owner.entity_raw and site_owner.entity_raw.code:find("TOWER")) or
                              (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault)
-            local oname = is_tower and "Tower" or dfhack.translation.translateName(eff_civ.name, true)
-            local orace = is_tower and "tower" or format_entity_race(eff_civ)
+            local oname = is_tower and "tower" or dfhack.translation.translateName(eff_civ.name, true):lower()
+            local orace = is_tower and "tower" or format_entity_race(eff_civ):lower()
             local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
             if is_tower then
                 status_str = "hostile"
                 status_pen = COLOR_LIGHTRED
+            else
+                status_str = status_str:lower()
             end
-            local stype = format_site_type(site)
+            local stype = format_site_type(site):lower()
             local site_live_pop = get_site_actual_live_pop(site, stype) or 0
-            local hist_pop = format_population(site_live_pop)
+            local hist_pop = format_population(site_live_pop):lower()
             if hist_pop == "" then hist_pop = "few" end
 
             local is_primary = (best_site and site.id == best_site.id)
-            local cand_pop_fmt = format_est_pop(site_live_pop)
+            local cand_pop_fmt = format_est_pop(site_live_pop):lower()
             if is_primary then
-                cand_pop_fmt = pop_fmt
+                cand_pop_fmt = pop_fmt:lower()
             end
 
             local dist_val = 0
             local t_str = "here"
             if not is_primary and cand.dist and cand.dist > 0.05 then
                 dist_val = cand.dist
-                local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y)
-                t_str = format_travel_time(math.floor(cand.dist * 10), dir)
+                local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y):lower()
+                t_str = format_travel_time(math.floor(cand.dist * 10), dir):lower()
                 if t_str == "" then t_str = "here" end
             end
 
@@ -997,7 +1006,7 @@ function scan_neighbors()
                     history_pop = hist_pop,
                     est_pop = cand_pop_fmt,
                     war_str = "",
-                    direction = is_primary and "here" or calculate_direction(world_x, world_y, site.pos.x, site.pos.y),
+                    direction = is_primary and "here" or calculate_direction(world_x, world_y, site.pos.x, site.pos.y):lower(),
                     status = status_str,
                     status_pen = status_pen,
                     war_with_site = false,
@@ -1128,11 +1137,11 @@ function EmbarkNeighbors:init()
     if urban_y and #urban_lines > 0 then
         local urban_tokens = {
             {text='urban:  ', pen=COLOR_GREY},
-            {text=urban_lines[1], pen=COLOR_LIGHTCYAN},
+            {text=urban_lines[1], pen=COLOR_WHITE},
         }
         for u = 2, #urban_lines do
             table.insert(urban_tokens, NEWLINE)
-            table.insert(urban_tokens, {text='        ' .. urban_lines[u], pen=COLOR_LIGHTCYAN})
+            table.insert(urban_tokens, {text='        ' .. urban_lines[u], pen=COLOR_WHITE})
         end
         table.insert(subviews, widgets.Label{
             frame={t=urban_y, l=0, r=0, h=urban_h},
