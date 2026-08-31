@@ -172,6 +172,28 @@ local function apply_all()
     end
 end
 
+local function wrap_text(text, width)
+    width = width or 40
+    local lines = {}
+    for paragraph in tostring(text):gmatch('[^\r\n]+') do
+        local line = ''
+        for word in paragraph:gmatch('%S+') do
+            if #line == 0 then
+                line = word
+            elseif #line + 1 + #word <= width then
+                line = line .. ' ' .. word
+            else
+                table.insert(lines, line)
+                line = word
+            end
+        end
+        if #line > 0 then
+            table.insert(lines, line)
+        end
+    end
+    return table.concat(lines, '\n')
+end
+
 -- ---- GUI --------------------------------------------------------------------
 AmyWindow = defclass(AmyWindow, widgets.Window)
 AmyWindow.ATTRS{
@@ -187,14 +209,13 @@ function AmyWindow:init()
             frame = {l = 0, t = 0},
             text = {
                 {text = 'Amywebbskii Scripts Suite', pen = COLOR_LIGHTCYAN},
-                {text = '  (Click / Enter to toggle [x] autorun)', pen = COLOR_GREY},
+                {text = '  (DFHack QoL & Fortress Utilities)', pen = COLOR_GREY},
             },
         },
         widgets.List{
             view_id = 'tool_list',
             frame = {l = 0, t = 2, w = 32, b = 2},
             on_select = function(_, choice) self:show_tool(choice.item) end,
-            on_submit = function(_, choice) self:toggle_tool(choice.item) end,
         },
         widgets.Panel{
             frame = {l = 34, t = 2, r = 0, b = 2},
@@ -202,11 +223,6 @@ function AmyWindow:init()
                 widgets.Label{
                     view_id = 'tool_title',
                     frame = {l = 0, t = 0},
-                    text = '',
-                },
-                widgets.Label{
-                    view_id = 'tool_state',
-                    frame = {l = 0, t = 1},
                     text = '',
                 },
                 widgets.Label{
@@ -224,15 +240,15 @@ function AmyWindow:init()
         },
         widgets.HotkeyLabel{
             frame = {l = 0, b = 0},
-            key = 'SELECT',
-            label = 'Toggle Autorun [x]',
+            key = 'CUSTOM_T',
+            label = 'Toggle Autorun',
             on_activate = function()
                 local _, choice = self.subviews.tool_list:getSelected()
                 if choice and choice.item then self:toggle_tool(choice.item) end
             end,
         },
         widgets.HotkeyLabel{
-            frame = {l = 28, b = 0},
+            frame = {l = 22, b = 0},
             key = 'CUSTOM_R',
             label = 'Run Manually Now',
             on_activate = function()
@@ -242,6 +258,24 @@ function AmyWindow:init()
         },
     }
     self:refresh()
+end
+
+function AmyWindow:onInput(keys)
+    if keys.SELECT or keys.CUSTOM_SPACE or keys.CUSTOM_T then
+        local _, choice = self.subviews.tool_list:getSelected()
+        if choice and choice.item then
+            self:toggle_tool(choice.item)
+            return true
+        end
+    end
+    if keys.CUSTOM_R then
+        local _, choice = self.subviews.tool_list:getSelected()
+        if choice and choice.item then
+            self:run_tool(choice.item)
+            return true
+        end
+    end
+    return AmyWindow.super.onInput(self, keys)
 end
 
 function AmyWindow:refresh()
@@ -277,23 +311,16 @@ end
 
 function AmyWindow:show_tool(tool)
     if not tool then return end
-    local on = is_on(tool.key)
     self.subviews.tool_title:setText({
         {text = tool.name, pen = COLOR_WHITE},
         {text = ('  [%s]'):format(tool.category:upper()), pen = COLOR_LIGHTCYAN},
-    })
-    self.subviews.tool_state:setText({
-        {text = 'Autorun on load: ', pen = COLOR_DARKGREY},
-        {
-            text = on and 'ENABLED [x]' or 'DISABLED [ ]',
-            pen = on and COLOR_LIGHTGREEN or COLOR_RED,
-        },
     })
     self.subviews.tool_cmd:setText({
         {text = 'Command: ', pen = COLOR_DARKGREY},
         {text = tool.cmd, pen = COLOR_LIGHTYELLOW},
     })
-    self.subviews.tool_desc:setText(tool.desc)
+    local desc_w = math.max(36, self.frame.w - 38)
+    self.subviews.tool_desc:setText(wrap_text(tool.desc, desc_w))
 end
 
 function AmyWindow:run_tool(tool)
