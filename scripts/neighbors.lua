@@ -498,22 +498,150 @@ local function get_diplomatic_status(ent, player_civ, def_state)
     return "neutral", COLOR_WHITE
 end
 
--- splits site string into 2 clean lines if exceeding limit
-local function split_site_info(str, max_len)
+-- extracts high-signal urban architecture, fortifications, and subterranean summary
+local function get_site_urban_summary(s)
+    if not s then return nil end
+    local r = s.realization
+    local stype = (df.world_site_type[s.type] or 'site'):lower()
+
+    local castles, towers, walls = 0, 0, 0
+    local taverns, temples, libraries, guildhalls, counting_houses, wells, markets, warehouses = 0, 0, 0, 0, 0, 0, 0, 0
+    local houses, shops, courtyards, pastures = 0, 0, 0, 0
+    local underground_layers = 0
+
+    if r then
+        if r.site_underground_layer and #r.site_underground_layer > 0 then
+            underground_layers = #r.site_underground_layer
+        end
+        if r.buildings then
+            for i = 0, #r.buildings - 1 do
+                local b = r.buildings[i]
+                local bt = df.site_realization_building_type[b.type]
+                if bt == 'castle_wall' then walls = walls + 1
+                elseif bt == 'castle_tower' then towers = towers + 1
+                elseif bt == 'tavern' then taverns = taverns + 1
+                elseif bt == 'temple' then temples = temples + 1
+                elseif bt == 'library' then libraries = libraries + 1
+                elseif bt == 'guildhall' then guildhalls = guildhalls + 1
+                elseif bt == 'counting_house' then counting_houses = counting_houses + 1
+                elseif bt == 'well' then wells = wells + 1
+                elseif bt == 'market_square' then markets = markets + 1
+                elseif bt == 'warehouse' then warehouses = warehouses + 1
+                elseif bt == 'shop_house' then shops = shops + 1
+                elseif bt == 'house' then houses = houses + 1
+                elseif bt == 'courtyard' then courtyards = courtyards + 1
+                elseif bt == 'pasture' then pastures = pastures + 1
+                end
+            end
+        end
+    end
+
+    if s.buildings and #s.buildings > 0 then
+        for i = 0, #s.buildings - 1 do
+            local b = s.buildings[i]
+            local bt = df.abstract_building_type[b:getType()] or ''
+            if bt == 'INN_TAVERN' and taverns == 0 then taverns = taverns + 1
+            elseif bt == 'TEMPLE' and temples == 0 then temples = temples + 1
+            elseif bt == 'LIBRARY' and libraries == 0 then libraries = libraries + 1
+            elseif bt == 'GUILDHALL' and guildhalls == 0 then guildhalls = guildhalls + 1
+            elseif bt == 'COUNTING_HOUSE' and counting_houses == 0 then counting_houses = counting_houses + 1
+            elseif bt == 'MARKET' and markets == 0 then markets = markets + 1
+            end
+        end
+    end
+
+    local feat = {}
+    if towers > 0 or walls > 0 then
+        table.insert(feat, string.format('castle keep (%d towers, %d walls)', towers, walls))
+    end
+    if taverns > 0 then table.insert(feat, taverns == 1 and 'tavern' or (taverns .. ' taverns')) end
+    if temples > 0 then table.insert(feat, temples == 1 and 'temple' or (temples .. ' temples')) end
+    if libraries > 0 then table.insert(feat, libraries == 1 and 'library' or (libraries .. ' libraries')) end
+    if guildhalls > 0 then table.insert(feat, guildhalls == 1 and 'guildhall' or (guildhalls .. ' guildhalls')) end
+    if counting_houses > 0 then table.insert(feat, 'counting house') end
+    if markets > 0 then table.insert(feat, markets == 1 and 'market' or (markets .. ' market stalls')) end
+    if shops > 0 then table.insert(feat, shops .. ' artisan shops') end
+    if houses > 0 then table.insert(feat, houses .. ' houses') end
+    if wells > 0 then table.insert(feat, wells == 1 and 'public well' or (wells .. ' wells')) end
+    if warehouses > 0 then table.insert(feat, 'warehouse') end
+
+    if underground_layers > 0 then
+        table.insert(feat, string.format('%d subterranean layers', underground_layers))
+    end
+
+    local summary = ''
+    if #feat > 0 then
+        summary = table.concat(feat, ', ')
+        if r and r.num_buildings and r.num_buildings > 0 then
+            summary = summary .. string.format(' [%d plots total]', r.num_buildings)
+        end
+    else
+        if s.type == df.world_site_type.Monument then
+            local tombs = 0
+            if s.buildings then
+                for i = 0, #s.buildings - 1 do
+                    if df.abstract_building_type[s.buildings[i]:getType()] == 'TOMB' then
+                        tombs = tombs + 1
+                    end
+                end
+            end
+            if tombs > 0 then
+                summary = string.format('ancient stone monument / dungeon labyrinth (%d tomb chambers)', tombs)
+            else
+                summary = 'ancient stone monument / subterranean dungeon'
+            end
+        elseif s.type == df.world_site_type.Vault then
+            summary = 'sealed divine vault & ancient labyrinth'
+        elseif s.type == df.world_site_type.Camp then
+            summary = 'temporary nomadic campsite with tents & perimeter posts'
+        elseif s.type == df.world_site_type.Cave or s.type == df.world_site_type.LairShrine then
+            summary = 'natural cavern network / beast lair'
+        elseif s.type == df.world_site_type.MountainHalls or s.type == df.world_site_type.Fortress or s.type == df.world_site_type.DarkFortress then
+            local infra = s.infrastructure_pop_level or 0
+            if infra > 100 then
+                summary = string.format('deep subterranean fortress halls & bastions [infra level %d]', infra)
+            else
+                summary = 'subterranean fortress halls & defensive bastions'
+            end
+        elseif s.type == df.world_site_type.ForestRetreat then
+            summary = 'arboreal forest retreat with living canopy structures'
+        else
+            local infra = s.infrastructure_pop_level or 0
+            if infra > 100 then
+                summary = string.format('developed settlement [infrastructure level %d]', infra)
+            elseif infra > 20 then
+                summary = string.format('small settlement [infrastructure level %d]', infra)
+            else
+                summary = 'primitive settlement / farmsteads'
+            end
+        end
+    end
+    return summary
+end
+
+-- splits text into wrapped lines if exceeding max_len
+local function split_text_wrap(str, max_len)
+    max_len = max_len or 120
+    if not str or #str == 0 then return {} end
     if #str <= max_len then
         return {str}
     end
-    local split_idx = max_len
-    for i = max_len, max_len - 35, -1 do
-        local c = str:sub(i, i)
-        if c == '[' or c == '|' or c == ' ' then
-            split_idx = i - 1
-            break
+    local lines = {}
+    local line = ''
+    for word in tostring(str):gmatch('%S+') do
+        if #line == 0 then
+            line = word
+        elseif #line + 1 + #word <= max_len then
+            line = line .. ' ' .. word
+        else
+            table.insert(lines, line)
+            line = word
         end
     end
-    local line1 = str:sub(1, split_idx):gsub("%s+$", "")
-    local line2 = "        " .. str:sub(split_idx + 1):gsub("^%s+", "")
-    return {line1, line2}
+    if #line > 0 then
+        table.insert(lines, line)
+    end
+    return lines
 end
 
 -- core data collector
@@ -719,6 +847,11 @@ function scan_neighbors()
         end
     end
 
+    local urban_info_str = nil
+    if best_site then
+        urban_info_str = get_site_urban_summary(best_site)
+    end
+
     -- 4. collect all civilizations and nearby factions
     local entries = {}
     local seen_entities = {}
@@ -913,13 +1046,14 @@ function scan_neighbors()
         player_civ_name = player_civ_name,
         site_info_str = site_info_str,
         pop_info_str = pop_info_str,
+        urban_info_str = urban_info_str,
     }
 end
 
 -- Draggable GUI window component
 EmbarkNeighbors = defclass(EmbarkNeighbors, widgets.Window)
 EmbarkNeighbors.ATTRS {
-    frame={w=132, h=26, l=2, t=2},
+    frame={w=132, h=27, l=2, t=2},
     draggable=true,
     drag_anchors={title=true, frame=true, body=false},
 }
@@ -945,61 +1079,101 @@ function EmbarkNeighbors:init()
         })
     end
 
-    local site_lines = split_site_info(data.site_info_str, 120)
+    local site_lines = split_text_wrap(data.site_info_str, 120)
     local site_tokens = {
         {text='site:   ', pen=COLOR_GREY},
-        {text=site_lines[1], pen=COLOR_WHITE},
+        {text=site_lines[1] or '', pen=COLOR_WHITE},
     }
-    if site_lines[2] then
+    for i = 2, #site_lines do
         table.insert(site_tokens, NEWLINE)
-        table.insert(site_tokens, {text=site_lines[2], pen=COLOR_WHITE})
+        table.insert(site_tokens, {text='        ' .. site_lines[i], pen=COLOR_WHITE})
     end
+
+    local urban_lines = {}
+    if data.urban_info_str and #data.urban_info_str > 0 then
+        urban_lines = split_text_wrap(data.urban_info_str, 120)
+    end
+
+    local top_y = #site_lines
+    local pop_y = top_y
+    top_y = top_y + 1
+
+    local urban_y = nil
+    local urban_h = 0
+    if #urban_lines > 0 then
+        urban_y = top_y
+        urban_h = #urban_lines
+        top_y = top_y + urban_h
+    end
+
+    local player_y = top_y
+    local legend_y = top_y + 1
+    local header_y = top_y + 3
+    local total_header_h = top_y + 4
+
+    local subviews = {
+        widgets.Label{
+            frame={t=0, l=0, r=0, h=#site_lines},
+            text=site_tokens,
+        },
+        widgets.Label{
+            frame={t=pop_y, l=0},
+            text={
+                {text='pop:    ', pen=COLOR_GREY},
+                {text=data.pop_info_str or '0', pen=COLOR_WHITE},
+            }
+        },
+    }
+
+    if urban_y and #urban_lines > 0 then
+        local urban_tokens = {
+            {text='urban:  ', pen=COLOR_GREY},
+            {text=urban_lines[1], pen=COLOR_LIGHTCYAN},
+        }
+        for u = 2, #urban_lines do
+            table.insert(urban_tokens, NEWLINE)
+            table.insert(urban_tokens, {text='        ' .. urban_lines[u], pen=COLOR_LIGHTCYAN})
+        end
+        table.insert(subviews, widgets.Label{
+            frame={t=urban_y, l=0, r=0, h=urban_h},
+            text=urban_tokens,
+        })
+    end
+
+    table.insert(subviews, widgets.Label{
+        frame={t=player_y, l=0},
+        text={
+            {text='player: ', pen=COLOR_GREY},
+            {text='[' .. data.player_race .. '] ' .. data.player_civ_name, pen=COLOR_WHITE},
+        }
+    })
+    table.insert(subviews, widgets.Label{
+        frame={t=legend_y, l=0},
+        text={
+            {text='legend: ', pen=COLOR_GREY},
+            {text='hostile', pen=COLOR_LIGHTRED},
+            {text=' | ', pen=COLOR_DARKGREY},
+            {text='peaceful', pen=COLOR_LIGHTBLUE},
+            {text=' | ', pen=COLOR_DARKGREY},
+            {text='neutral', pen=COLOR_WHITE},
+        }
+    })
+    table.insert(subviews, widgets.Label{
+        frame={t=header_y, l=0},
+        text={
+            {text=string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
+                'travel', 'civ race', 'hist. pop', 'est. pop', 'conflict', 'site type', 'site name'), pen=COLOR_YELLOW},
+        }
+    })
 
     self:addviews{
         widgets.Panel{
-            frame={t=0, l=0, r=0, h=#site_lines + 5},
-            subviews={
-                widgets.Label{
-                    frame={t=0, l=0, r=0, h=#site_lines},
-                    text=site_tokens,
-                },
-                widgets.Label{
-                    frame={t=#site_lines, l=0},
-                    text={
-                        {text='pop:    ', pen=COLOR_GREY},
-                        {text=data.pop_info_str or '0', pen=COLOR_WHITE},
-                    }
-                },
-                widgets.Label{
-                    frame={t=#site_lines + 1, l=0},
-                    text={
-                        {text='player: ', pen=COLOR_GREY},
-                        {text='[' .. data.player_race .. '] ' .. data.player_civ_name, pen=COLOR_WHITE},
-                    }
-                },
-                widgets.Label{
-                    frame={t=#site_lines + 2, l=0},
-                    text={
-                        {text='legend: ', pen=COLOR_GREY},
-                        {text='hostile', pen=COLOR_LIGHTRED},
-                        {text=' | ', pen=COLOR_DARKGREY},
-                        {text='peaceful', pen=COLOR_LIGHTBLUE},
-                        {text=' | ', pen=COLOR_DARKGREY},
-                        {text='neutral', pen=COLOR_WHITE},
-                    }
-                },
-                widgets.Label{
-                    frame={t=#site_lines + 4, l=0},
-                    text={
-                        {text=string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
-                            'travel', 'civ race', 'hist. pop', 'est. pop', 'conflict', 'site type', 'site name'), pen=COLOR_YELLOW},
-                    }
-                },
-            }
+            frame={t=0, l=0, r=0, h=total_header_h},
+            subviews=subviews,
         },
         widgets.List{
             view_id='list',
-            frame={t=#site_lines + 5, b=0, l=0, r=0},
+            frame={t=total_header_h, b=0, l=0, r=0},
             choices=choices,
         },
     }
