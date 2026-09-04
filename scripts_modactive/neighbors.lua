@@ -214,7 +214,7 @@ local function format_population(pop)
         return "dozens"
     elseif pop < 200 then
         return "a hundred"
-    elseif pop < 500 then
+    elseif pop < 1000 then
         return "hundreds"
     elseif pop < 2000 then
         return "a thousand"
@@ -240,9 +240,23 @@ end
 local function get_site_actual_live_pop(site, stype_str)
     if not site then return nil end
     local inh_total = 0
+    local seen_ep = {}
     if site.populace and site.populace.inhabitants then
         for i = 0, #site.populace.inhabitants - 1 do
-            inh_total = inh_total + (site.populace.inhabitants[i].count or 0)
+            local entry = site.populace.inhabitants[i]
+            local ps = entry.pop_spec
+            if ps and ps.epid and ps.epid >= 0 and not seen_ep[ps.epid] then
+                seen_ep[ps.epid] = true
+                local ep = df.entity_population.find(ps.epid)
+                if ep and ep.counts then
+                    for _, c in ipairs(ep.counts) do
+                        inh_total = inh_total + c
+                    end
+                end
+            end
+            if entry.count and entry.count > 0 then
+                inh_total = inh_total + entry.count
+            end
         end
     end
     local nem_count = (site.populace and site.populace.nemesis) and #site.populace.nemesis or 0
@@ -258,12 +272,12 @@ local function get_site_actual_live_pop(site, stype_str)
         local garrison = math.max(infra, nem_count * 10, 20)
         base_pop = math.max(base_pop, garrison + nem_count)
     elseif t:find("cave") or t:find("lair") or t:find("shrine") or t:find("tomb") or t:find("monument") then
-        base_pop = nem_count
+        base_pop = (inh_total > 0 and inh_total or nem_count)
     elseif t:find("town") or t:find("city") or t:find("mountainhall") or t:find("hamlet") or t:find("hillock") or t:find("retreat") then
         if inh_total > 0 then
-            base_pop = math.max(base_pop, inh_total + math.floor(infra * 0.5) + nem_count)
+            base_pop = math.max(base_pop, inh_total)
         else
-            base_pop = nem_count
+            base_pop = math.max(nem_count, math.floor(infra * 0.5))
         end
     end
 
@@ -371,38 +385,44 @@ local function check_entities_at_war(ent1, ent2)
     local e2 = get_effective_civ(ent2) or ent2
     if e1.id == e2.id then return false end
 
-    -- Check inherent hostility tags
-    if e1.entity_raw and (e1.entity_raw.code:find("EVIL") or e1.entity_raw.code:find("SKULKING")) then
-        if e2.entity_raw and not (e2.entity_raw.code:find("EVIL") or e2.entity_raw.code:find("SKULKING")) then
+    -- 1. Inherent hostility tags (e.g. civilized vs skulking/babysnatcher/evil)
+    local function is_hostile_tag(e)
+        if not e or not e.entity_raw then return false end
+        local code = tostring(e.entity_raw.code or ""):upper()
+        local flags = e.entity_raw.flags
+        if code:find("GOBLIN") or code:find("EVIL") or code:find("KOBOLD") then
             return true
         end
-    end
-    if e2.entity_raw and (e2.entity_raw.code:find("EVIL") or e2.entity_raw.code:find("SKULKING")) then
-        if e1.entity_raw and not (e1.entity_raw.code:find("EVIL") or e1.entity_raw.code:find("SKULKING")) then
+        if flags and (flags.BABYSNATCHER or flags.ITEM_THIEF or flags.SKULKING) then
             return true
         end
+        return false
     end
 
-    if e1.relations and e1.relations.diplomacy then
-        for _, dip in ipairs(e1.relations.diplomacy) do
-            if dip.target == e2.id or dip.target == ent2.id then
-                local r = tostring(df.diplomatic_relation_type[dip.relation] or dip.relation)
-                if r:find("War") or r:find("Enemy") or r:find("Hostile") then
+    if is_hostile_tag(e1) ~= is_hostile_tag(e2) then
+        return true
+    end
+
+    -- 2. Active historical diplomacy states (TotalWar or Skirmishing)
+    local function has_diplomacy_war(source_ent, target_id)
+        if not source_ent or not source_ent.relations or not source_ent.relations.diplomacy then
+            return false
+        end
+        local states = source_ent.relations.diplomacy.state
+        if not states then return false end
+        for _, dip in ipairs(states) do
+            if dip.group_id == target_id then
+                if dip.relation == df.diplomacy_state_type.TotalWar or dip.relation == df.diplomacy_state_type.Skirmishing then
                     return true
                 end
             end
         end
+        return false
     end
 
-    if e2.relations and e2.relations.diplomacy then
-        for _, dip in ipairs(e2.relations.diplomacy) do
-            if dip.target == e1.id or dip.target == ent1.id then
-                local r = tostring(df.diplomatic_relation_type[dip.relation] or dip.relation)
-                if r:find("War") or r:find("Enemy") or r:find("Hostile") then
-                    return true
-                end
-            end
-        end
+    if has_diplomacy_war(e1, e2.id) or has_diplomacy_war(e1, ent2.id)
+        or has_diplomacy_war(e2, e1.id) or has_diplomacy_war(e2, ent1.id) then
+        return true
     end
 
     return false
@@ -413,83 +433,71 @@ local function get_diplomatic_status(ent, player_civ, def_state)
     if not ent then return "neutral", COLOR_WHITE end
     local eff_ent = get_effective_civ(ent) or ent
 
-    -- 1. Player's own civilization or subordinate government is always peaceful
+    -- 1. player's own civilization or subordinate government is always peaceful
     if player_civ and (ent.id == player_civ.id or eff_ent.id == player_civ.id) then
         return "peaceful", COLOR_LIGHTBLUE
     end
 
-    -- 2. Authoritative native DF candidate state (if provided directly from def_candidate)
-    if def_state ~= nil then
-        local sname = tostring(df.embark_neighbor_state_type[def_state] or def_state):upper()
-        if sname:find("HOSTILE") or sname:find("WAR") or sname:find("NO_COMM") or def_state == 0 or def_state == 1 or def_state == 2 then
-            return "hostile", COLOR_LIGHTRED
-        elseif sname:find("PEACEFUL") or sname:find("NORMAL") or def_state == 4 then
-            return "peaceful", COLOR_LIGHTBLUE
-        end
-    end
-
-    -- 2. Explicit diplomatic relations from player civilization
-    if player_civ and player_civ.relations and player_civ.relations.diplomacy then
-        for _, dip in ipairs(player_civ.relations.diplomacy) do
-            if dip.target == ent.id or dip.target == eff_ent.id then
-                local r = tostring(df.diplomatic_relation_type[dip.relation] or dip.relation):upper()
-                if r:find("WAR") or r:find("ENEMY") or r:find("HOSTILE") then
-                    return "hostile", COLOR_LIGHTRED
-                elseif r:find("PEACE") or r:find("TRADE") then
-                    return "peaceful", COLOR_LIGHTBLUE
-                end
-            end
-        end
-    end
-
-    -- 4. Explicit diplomatic relations from target entity towards player
-    if ent.relations and ent.relations.diplomacy and player_civ then
-        for _, dip in ipairs(ent.relations.diplomacy) do
-            if dip.target == player_civ.id then
-                local r = tostring(df.diplomatic_relation_type[dip.relation] or dip.relation):upper()
-                if r:find("WAR") or r:find("ENEMY") or r:find("HOSTILE") then
-                    return "hostile", COLOR_LIGHTRED
-                elseif r:find("PEACE") or r:find("TRADE") then
-                    return "peaceful", COLOR_LIGHTBLUE
-                end
-            end
-        end
-    end
-    if eff_ent and eff_ent.id ~= ent.id and eff_ent.relations and eff_ent.relations.diplomacy and player_civ then
-        for _, dip in ipairs(eff_ent.relations.diplomacy) do
-            if dip.target == player_civ.id then
-                local r = tostring(df.diplomatic_relation_type[dip.relation] or dip.relation):upper()
-                if r:find("WAR") or r:find("ENEMY") or r:find("HOSTILE") then
-                    return "hostile", COLOR_LIGHTRED
-                elseif r:find("PEACE") or r:find("TRADE") then
-                    return "peaceful", COLOR_LIGHTBLUE
-                end
-            end
-        end
-    end
-
-    -- 5. Inherent evil / goblin tags ONLY if actually hostile by entity raw code (e.g. EVIL civ vs GOOD civ)
-    local function is_inherently_hostile(e)
+    -- 2. inherent evil / goblin / skulking tags: bidirectional hostility
+    local function entity_is_hostile_kind(e)
         if not e or not e.entity_raw then return false end
         local code = tostring(e.entity_raw.code or ""):upper()
-        if code:find("GOBLIN") or code:find("EVIL") or code:find("KOBOLD") then
-            if player_civ and player_civ.entity_raw then
-                local pcode = tostring(player_civ.entity_raw.code or ""):upper()
-                if not (pcode:find("GOBLIN") or pcode:find("EVIL") or pcode:find("KOBOLD")) then
-                    return true
-                end
-            else
-                return true
-            end
+        if code:find("GOBLIN") or code:find("EVIL") or code:find("KOBOLD") or code:find("ORC") then
+            return true
+        end
+        local flags = e.entity_raw.flags
+        if flags and (flags.BABYSNATCHER or flags.ITEM_THIEF or flags.SKULKING) then
+            return true
         end
         return false
     end
 
-    if is_inherently_hostile(ent) or is_inherently_hostile(eff_ent) then
+    local e_evil = entity_is_hostile_kind(ent) or entity_is_hostile_kind(eff_ent)
+    local p_evil = entity_is_hostile_kind(player_civ)
+    if e_evil ~= p_evil then
         return "hostile", COLOR_LIGHTRED
     end
 
-    -- 6. Civilized vs Independent/Nomad
+    -- 3. explicit historical diplomatic relations (war vs peace)
+    local function get_dip_state(source_ent, target_id)
+        if not source_ent or not source_ent.relations or not source_ent.relations.diplomacy then return nil end
+        local states = source_ent.relations.diplomacy.state
+        if not states then return nil end
+        for _, dip in ipairs(states) do
+            if dip.group_id == target_id then
+                if dip.relation == df.diplomacy_state_type.TotalWar or dip.relation == df.diplomacy_state_type.Skirmishing then
+                    return "hostile"
+                elseif dip.relation == df.diplomacy_state_type.Peace or dip.relation == df.diplomacy_state_type.TradeAgreement then
+                    return "peaceful"
+                end
+            end
+        end
+        return nil
+    end
+
+    if player_civ then
+        local st1 = get_dip_state(player_civ, ent.id) or get_dip_state(player_civ, eff_ent.id)
+        local st2 = get_dip_state(ent, player_civ.id) or get_dip_state(eff_ent, player_civ.id)
+        if st1 == "hostile" or st2 == "hostile" then
+            return "hostile", COLOR_LIGHTRED
+        elseif st1 == "peaceful" or st2 == "peaceful" then
+            return "peaceful", COLOR_LIGHTBLUE
+        end
+    end
+
+    -- 4. native DF candidate state (WAR / HOSTILE / NORMAL / NO_COMM / NO_TRADE)
+    if def_state ~= nil then
+        local sname = tostring(df.embark_neighbor_state_type[def_state] or def_state):upper()
+        if sname:find("HOSTILE") or sname:find("WAR") or def_state == 0 or def_state == 1 then
+            return "hostile", COLOR_LIGHTRED
+        elseif sname:find("PEACEFUL") or sname:find("NORMAL") or def_state == 4 then
+            return "peaceful", COLOR_LIGHTBLUE
+        end
+        -- NO_COMM (2) or NO_TRADE (3) reflect wagon/overland access, not diplomatic hostility.
+        -- Fall through to check entity civilized status instead of blinding returning neutral.
+    end
+
+    -- 5. civilized vs independent/nomad
     local is_civ = (ent.type == df.historical_entity_type.Civilization) or (eff_ent and eff_ent.type == df.historical_entity_type.Civilization)
     if is_civ then
         return "peaceful", COLOR_LIGHTBLUE
@@ -647,8 +655,11 @@ end
 -- core data collector
 function scan_neighbors()
     local scr = dfhack.gui.getDFViewscreen(true)
-    if not df.viewscreen_choose_start_sitest:is_instance(scr) then
-        return nil, 'must be on the embark site selection screen'
+    local is_world = df.viewscreen_worldst:is_instance(scr)
+    local is_fort = df.viewscreen_dwarfmodest:is_instance(scr) and dfhack.isMapLoaded()
+    local is_embark = df.viewscreen_choose_start_sitest:is_instance(scr)
+    if not is_world and not is_fort and not is_embark then
+        return nil, 'must be on the embark site selection screen, world map screen, or in fortress mode'
     end
 
     -- 1. identify currently selected player civilization
@@ -657,10 +668,11 @@ function scan_neighbors()
     if cid and cid >= 0 then
         player_civ = df.historical_entity.find(cid)
     end
-    if not player_civ then
+    if not player_civ and is_embark then
         local start_civs = safe_get(function() return scr.start_civ end)
+        local sel_idx = safe_get(function() return scr.selected_civ end) or 0
         if start_civs and #start_civs > 0 then
-            player_civ = start_civs[0]
+            player_civ = (sel_idx >= 0 and start_civs[sel_idx]) or start_civs[0]
         end
     end
 
@@ -680,18 +692,31 @@ function scan_neighbors()
     local world_x = 0
     local world_y = 0
 
-    local hover_x = safe_get(function() return scr.neighbor_hover_ax end)
-    local hover_y = safe_get(function() return scr.neighbor_hover_ay end)
-
-    if hover_x and hover_y and hover_x >= 0 and hover_y >= 0 then
-        world_x = hover_x
-        world_y = hover_y
+    if is_world then
+        if scr.focus_ax and scr.focus_ay and scr.focus_ax >= 0 and scr.focus_ay >= 0 then
+            world_x = scr.focus_ax
+            world_y = scr.focus_ay
+        elseif df.global.plotinfo and df.global.plotinfo.main and df.global.plotinfo.main.fortress_site then
+            world_x = df.global.plotinfo.main.fortress_site.pos.x
+            world_y = df.global.plotinfo.main.fortress_site.pos.y
+        end
+    elseif is_fort then
+        if df.global.plotinfo and df.global.plotinfo.main and df.global.plotinfo.main.fortress_site then
+            world_x = df.global.plotinfo.main.fortress_site.pos.x
+            world_y = df.global.plotinfo.main.fortress_site.pos.y
+        end
     else
         local reg_x = safe_get(function() return scr.location.region_pos.x end)
         local reg_y = safe_get(function() return scr.location.region_pos.y end)
+        local hover_x = safe_get(function() return scr.neighbor_hover_ax end)
+        local hover_y = safe_get(function() return scr.neighbor_hover_ay end)
+
         if reg_x and reg_y and reg_x >= 0 and reg_y >= 0 then
             world_x = reg_x
             world_y = reg_y
+        elseif hover_x and hover_y and hover_x >= 0 and hover_y >= 0 then
+            world_x = hover_x
+            world_y = hover_y
         else
             local loc_x = safe_get(function() return scr.location.x end)
             local loc_y = safe_get(function() return scr.location.y end)
@@ -803,18 +828,16 @@ function scan_neighbors()
 
     local emb_w = 4
     local emb_h = 4
-    if scr.embark_dx and scr.embark_dx >= 1 and scr.embark_dx <= 16 then
-        emb_w = scr.embark_dx
-    end
-    if scr.embark_dy and scr.embark_dy >= 1 and scr.embark_dy <= 16 then
-        emb_h = scr.embark_dy
-    end
-    if scr.location and scr.location.embark_pos_min and scr.location.embark_pos_max then
-        local min_x = scr.location.embark_pos_min.x
-        local max_x = scr.location.embark_pos_max.x
-        local min_y = scr.location.embark_pos_min.y
-        local max_y = scr.location.embark_pos_max.y
-        if min_x >= 0 and max_x >= min_x and min_y >= 0 and max_y >= min_y then
+    if is_embark then
+        local edx = safe_get(function() return scr.embark_dx end)
+        local edy = safe_get(function() return scr.embark_dy end)
+        if edx and edx >= 1 and edx <= 16 then emb_w = edx end
+        if edy and edy >= 1 and edy <= 16 then emb_h = edy end
+        local min_x = safe_get(function() return scr.location.embark_pos_min.x end)
+        local max_x = safe_get(function() return scr.location.embark_pos_max.x end)
+        local min_y = safe_get(function() return scr.location.embark_pos_min.y end)
+        local max_y = safe_get(function() return scr.location.embark_pos_max.y end)
+        if min_x and max_x and min_y and max_y and min_x >= 0 and max_x >= min_x and min_y >= 0 and max_y >= min_y then
             local calc_w = max_x - min_x + 1
             local calc_h = max_y - min_y + 1
             if calc_w >= 1 and calc_w <= 16 and calc_h >= 1 and calc_h <= 16 then
@@ -831,32 +854,48 @@ function scan_neighbors()
     if best_site then
         local stype_str = format_site_type(best_site)
         total_site_pop = get_site_actual_live_pop(best_site, stype_str) or 0
-        local site_w = (best_site.global_max_x and best_site.global_min_x) and (best_site.global_max_x - best_site.global_min_x + 1) or 1
-        local site_h = (best_site.global_max_y and best_site.global_min_y) and (best_site.global_max_y - best_site.global_min_y + 1) or 1
-        local total_site_area = math.max(1, site_w * site_h)
 
-        local emb_slice_pop = total_site_pop
-        local hit_cap = false
-        local max_engine_spawn = math.floor((300 * (emb_area / 9) + 5) / 10) * 10
-        if total_site_area > emb_area then
-            local ratio = math.min(1.0, emb_area / total_site_area)
-            local nem_count = (best_site.populace and best_site.populace.nemesis) and #best_site.populace.nemesis or 0
-            local raw_slice = math.max(nem_count, math.floor(total_site_pop * math.sqrt(ratio)))
-            if raw_slice >= (max_engine_spawn + nem_count) then
-                emb_slice_pop = max_engine_spawn + nem_count
-                hit_cap = true
-            else
-                emb_slice_pop = math.min(total_site_pop, raw_slice)
-            end
-        elseif emb_slice_pop >= max_engine_spawn then
-            hit_cap = true
-        end
-
-        pop_fmt = format_est_pop(emb_slice_pop)
-        if hit_cap then
-            pop_info_str = string.format("%s (estimated population for %dx%d embark, %d engine cap)", pop_fmt, emb_w, emb_h, max_engine_spawn)
+        if is_world or is_fort then
+            pop_fmt = format_est_pop(total_site_pop)
+            pop_info_str = string.format("%s (living population: ~%d)", format_population(total_site_pop), total_site_pop)
         else
-            pop_info_str = string.format("%s (estimated population for %dx%d embark)", pop_fmt, emb_w, emb_h)
+            local site_w = (best_site.global_max_x and best_site.global_min_x) and (best_site.global_max_x - best_site.global_min_x + 1) or 1
+            local site_h = (best_site.global_max_y and best_site.global_min_y) and (best_site.global_max_y - best_site.global_min_y + 1) or 1
+            local total_site_area = math.max(1, site_w * site_h)
+
+            local emb_slice_pop = total_site_pop
+            local hit_cap = false
+            local max_engine_spawn = math.floor((150 * (emb_area / 9) + 5) / 10) * 10
+            if total_site_area > emb_area then
+                local area_ratio = emb_area / total_site_area
+                local effective_ratio = (area_ratio + math.sqrt(area_ratio)) / 3.0
+                local nem_count = (best_site.populace and best_site.populace.nemesis) and #best_site.populace.nemesis or 0
+                local raw_slice = math.floor(total_site_pop * effective_ratio)
+
+                local bld_count = (best_site.realization and best_site.realization.buildings) and #best_site.realization.buildings or 0
+                if bld_count > 0 then
+                    local bld_slice = math.floor(bld_count * (emb_area / total_site_area) * 8)
+                    raw_slice = math.max(raw_slice, bld_slice)
+                end
+
+                raw_slice = math.max(nem_count, raw_slice)
+
+                if raw_slice >= (max_engine_spawn + nem_count) then
+                    emb_slice_pop = max_engine_spawn + nem_count
+                    hit_cap = true
+                else
+                    emb_slice_pop = math.min(total_site_pop, raw_slice)
+                end
+            elseif emb_slice_pop >= max_engine_spawn then
+                hit_cap = true
+            end
+
+            pop_fmt = format_est_pop(emb_slice_pop)
+            if hit_cap then
+                pop_info_str = string.format("%s (estimated population for %dx%d embark, %d engine cap)", pop_fmt, emb_w, emb_h, max_engine_spawn)
+            else
+                pop_info_str = string.format("%s (estimated population for %dx%d embark)", pop_fmt, emb_w, emb_h)
+            end
         end
     end
 
@@ -888,8 +927,7 @@ function scan_neighbors()
             if civ and dist >= 0 then
                 local is_tower = (civ.type == df.historical_entity_type.Tower) or
                                  (civ.entity_raw and civ.entity_raw.code:find("TOWER")) or
-                                 (site and (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault)) or
-                                 (state == 2 or state == df.embark_neighbor_state_type.NO_COMM)
+                                 (site and (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault))
                 local eff_civ = is_tower and civ or (get_effective_civ(civ) or civ)
                 local eff_key = is_tower and (site and ("tower_" .. site.id) or ("tower_" .. civ.id)) or tostring(eff_civ.id)
 
@@ -1016,6 +1054,91 @@ function scan_neighbors()
                     war_with_site = false,
                     is_primary_site = is_primary,
                 })
+            end
+        end
+    end
+
+    -- C. When not on embark screen or def_candidate is empty: dynamically collect reachable neighboring sites
+    if not def_candidate or #def_candidate == 0 then
+        local nearby_sites = {}
+        for _, s in ipairs(sites) do
+            local dx = s.pos.x - world_x
+            local dy = s.pos.y - world_y
+            local dist = math.sqrt(dx * dx + dy * dy)
+            if dist <= 5.0 and is_land_connected(world_x, world_y, s.pos.x, s.pos.y) then
+                table.insert(nearby_sites, {
+                    site = s,
+                    dist = dist,
+                })
+            end
+        end
+        table.sort(nearby_sites, function(a, b) return a.dist < b.dist end)
+
+        for _, cand in ipairs(nearby_sites) do
+            local site = cand.site
+            local site_owner = get_site_active_occupant(site) or df.historical_entity.find(site.cur_owner_id) or df.historical_entity.find(site.civ_id)
+            local eff_civ = site_owner and (get_effective_civ(site_owner) or site_owner) or nil
+            local is_tower = (site_owner and ((site_owner.type == df.historical_entity_type.Tower) or
+                             (site_owner.entity_raw and site_owner.entity_raw.code:find("TOWER")))) or
+                             (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault)
+            local is_primary = (best_site and site.id == best_site.id)
+
+            -- Omit non-primary unclaimed/wilderness sites (uncolonized shrines, ruins, empty lairs)
+            if is_primary or is_tower or (site_owner and eff_civ) then
+                local oname = is_tower and "Tower" or (eff_civ and dfhack.translation.translateName(eff_civ.name, true) or "unclaimed")
+                local orace = is_tower and "tower" or (eff_civ and format_entity_race(eff_civ) or "wilderness")
+
+                if is_primary or (orace ~= "wilderness" and orace ~= "unknown") then
+                    local sname = dfhack.translation.translateName(site.name, true)
+                    local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
+                    if is_tower then
+                        status_str = "hostile"
+                        status_pen = COLOR_LIGHTRED
+                    end
+                    local stype = format_site_type(site)
+                    local site_live_pop = get_site_actual_live_pop(site, stype) or 0
+                    local hist_pop = format_population(site_live_pop)
+                    if hist_pop == "" then hist_pop = "few" end
+
+                    local cand_pop_fmt = format_est_pop(site_live_pop)
+                    if is_primary then
+                        cand_pop_fmt = pop_fmt
+                    end
+
+                    local dist_val = cand.dist
+                    local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y)
+                    local t_str = format_travel_time(math.floor(cand.dist * 10), dir)
+                    if is_primary or cand.dist <= 0.05 then
+                        dist_val = 0
+                        t_str = "here"
+                    end
+
+                    local war_with_site = false
+                    if site_owner_entity and eff_civ and check_entities_at_war(site_owner_entity, eff_civ) then
+                        war_with_site = true
+                    end
+                    if is_tower and site_owner_entity then
+                        war_with_site = true
+                    end
+
+                    table.insert(entries, {
+                        civ = eff_civ,
+                        rname = orace,
+                        cname = oname,
+                        sname = sname,
+                        stype = stype,
+                        dist = dist_val,
+                        travel_str = t_str,
+                        history_pop = hist_pop,
+                        est_pop = cand_pop_fmt,
+                        war_str = war_with_site and "war vs site" or "",
+                        direction = dir,
+                        status = status_str,
+                        status_pen = status_pen,
+                        war_with_site = war_with_site,
+                        is_primary_site = is_primary,
+                    })
+                end
             end
         end
     end
@@ -1212,8 +1335,11 @@ end
 
 function show_gui()
     local scr = dfhack.gui.getDFViewscreen(true)
-    if not df.viewscreen_choose_start_sitest:is_instance(scr) then
-        qerror('must be on the embark site selection screen')
+    local is_world = df.viewscreen_worldst:is_instance(scr)
+    local is_fort = df.viewscreen_dwarfmodest:is_instance(scr) and dfhack.isMapLoaded()
+    local is_embark = df.viewscreen_choose_start_sitest:is_instance(scr)
+    if not is_world and not is_fort and not is_embark then
+        qerror('must be on the embark site selection screen, world map screen, or in fortress mode')
     end
     if active_screen and active_screen:isShown() then
         active_screen:dismiss()
@@ -1236,9 +1362,13 @@ function print_cli()
     print(string.format('  site:   %s', data.site_info_str))
     print(string.rep('-', 120))
 
+    print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
+        'travel', 'civ race', 'hist. pop', 'est. pop', 'conflict', 'site type', 'site name'))
+    print(string.rep('-', 120))
+
     for _, n in ipairs(data.entries) do
-        print(string.format('%-16.16s | %-20.20s | %-24.24s | %-16.16s | %s',
-            n.travel_str, n.rname, n.pop_str, n.stype, n.sname))
+        print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
+            n.travel_str, n.rname, n.history_pop or '', n.est_pop or '', n.war_str or '', n.stype, n.sname))
     end
 
     print(string.rep('-', 120) .. '\n')

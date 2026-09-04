@@ -1037,13 +1037,19 @@ function ChooseHermitWindow:init()
         local prof_str = (dfhack.units.getProfessionName(u) or "peasant"):lower()
 
         local willpower = 1000
+        local focus = 1000
         local stress_vuln = 50
         local cheer = 50
 
         local soul = u.status and u.status.current_soul
         if soul then
-            if soul.mental_attrs and soul.mental_attrs[df.mental_attribute_type.WILLPOWER] then
-                willpower = soul.mental_attrs[df.mental_attribute_type.WILLPOWER].value
+            if soul.mental_attrs then
+                if soul.mental_attrs[df.mental_attribute_type.WILLPOWER] then
+                    willpower = soul.mental_attrs[df.mental_attribute_type.WILLPOWER].value
+                end
+                if soul.mental_attrs[df.mental_attribute_type.FOCUS] then
+                    focus = soul.mental_attrs[df.mental_attribute_type.FOCUS].value
+                end
             end
             if soul.personality then
                 stress_vuln = soul.personality.traits[df.personality_facet_type.STRESS_VULNERABILITY] or 50
@@ -1051,8 +1057,8 @@ function ChooseHermitWindow:init()
             end
         end
 
-        local line = string.format("[%d] %-14.14s | %-6.6s | age:%-3d | %-18.18s | will:%-4d | stress:%-2d | cheer:%-2d",
-            idx, first_name, sex_str, age_int, prof_str, willpower, stress_vuln, cheer)
+        local line = string.format("[%d] %-14.14s | %-6.6s | age:%-3d | %-16.16s | stress:%-2d | will:%-4d | focus:%-4d | cheer:%-2d",
+            idx, first_name, sex_str, age_int, prof_str, stress_vuln, willpower, focus, cheer)
 
         table.insert(choices, {
             text=line,
