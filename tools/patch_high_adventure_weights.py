@@ -2,6 +2,7 @@
 """
 patch_high_adventure_weights.py: applies 10x civilization weight boost for all High Adventure civilizations
 (Kobolds, Second Humans, Dark Dwarves, Drow, High Elves, Orcs, Illithids, Ancient Golems, Succubi)
+and bundles illithid mountain/underdark cave site fixes, expanded start biomes, and baby/child reproduction tokens.
 """
 
 import sys, shutil
@@ -51,6 +52,13 @@ def apply_patch() -> None:
     if not applied_any:
         print("Warning: Target mod directories for HIGH_ADVENTURE not found.")
 
+    # Bundle illithid spawn and reproduction fixes
+    try:
+        import patch_ha_illithid_spawns
+        patch_ha_illithid_spawns.apply_patch()
+    except Exception as e:
+        print(f"Warning: Failed to apply bundled illithid spawn fixes: {e}")
+
 def unapply_patch() -> None:
     purge_old_files()
     for d in TARGET_DIRS:
@@ -66,7 +74,7 @@ def main() -> None:
     elif cmd == "--unapply":
         unapply_patch()
     elif cmd == "--status":
-        print("Status:", "patched (10x boost active for all HA civs)" if is_patched() else "unpatched")
+        print("Status:", "patched (10x boost active for all HA civs, illithid spawn fixes bundled)" if is_patched() else "unpatched")
     else:
         print(f"Unknown command: {cmd}. Usage: {sys.argv[0]} [--apply|--unapply|--status]")
         sys.exit(1)

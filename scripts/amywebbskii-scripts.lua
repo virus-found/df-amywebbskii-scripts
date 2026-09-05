@@ -525,7 +525,15 @@ local function make_weight_tool(key, name, mod_folders, raw_name, deps_name, des
         end,
         toggle = function()
             local cur = is_patch_file_present(folders, raw_name)
-            if key == 'ha-weights' then purge_ha_old_files() end
+            if key == 'ha-weights' then
+                purge_ha_old_files()
+                local home = os.getenv('HOME')
+                if home then
+                    local script_p = home .. '/docs/games/df/amywebbskii-scripts/tools/patch_ha_illithid_spawns.py'
+                    local flag = (not cur) and '--apply' or '--unapply'
+                    os.execute(('python3 "%s" %s >/dev/null 2>&1'):format(script_p, flag))
+                end
+            end
             local ok, err = set_raw_patch_file(folders, raw_name, not cur)
             if ok then
                 local s = (not cur) and 'enabled (10x boost applied)' or 'disabled (boost removed)'
@@ -821,7 +829,7 @@ local TOOLS = {
     },
     make_weight_tool('5e-kobold-weights', '5e kobold weight boost', {'dnd_kobold_race (51)', 'dnd_kobold_race (1)'}, 'entity_5e_kobold_weight_boost.txt', 'dnd_kobold_race', 'multiplies spawn weight of 5e kobolds by 10x with 9 duplicate civilization definitions (5e_kobold_civ_2..10) to give them equal worldgen standing alongside core civilizations.'),
     make_weight_tool('intros-kobold-weights', 'intro kobold weight boost', 'intros_kobolds (21)', 'entity_intros_kobold_weight_boost.txt', 'intros_kobolds', 'multiplies spawn weight of intro\'s dragony kobolds by 10x with 9 duplicate civilization definitions (dragony_2..10) to give them equal worldgen standing alongside core civilizations.'),
-    make_weight_tool('ha-weights', 'high adventure weight boost', 'HIGH_ADVENTURE (20)', 'entity_high_adventure_weight_boost.txt', 'high_adventure', 'multiplies spawn weight of all 9 high adventure civilizations (15x for core kobolds/humans/dwarves/drow/elves/orcs, 10x for illithids/golems/succubi) with duplicate civilization definitions.'),
+    make_weight_tool('ha-weights', 'high adventure weight boost', 'HIGH_ADVENTURE (20)', 'entity_high_adventure_weight_boost.txt', 'high_adventure', 'multiplies spawn weight of all 9 high adventure civilizations (15x for core races, 10x for illithids/golems/succubi) with duplicate civ definitions; bundles illithid mountain/underdark cave site fixes, expanded start biomes, and baby/child reproduction tokens so illithid colonies successfully spawn and breed in worldgen.'),
     make_weight_tool('dark-elves-weights', 'dark elves weight boost', 'dark_elves_redux (6)', 'entity_dark_elves_weight_boost.txt', 'dark_elves_redux', 'multiplies spawn weight of dark elves by 15x (1.5x core modifier) with 14 duplicate civilization definitions to give them equal worldgen standing alongside core civilizations.'),
     make_weight_tool('high-elves-weights', 'high elves weight boost', 'playable_races_revisioned (161)', 'entity_high_elves_weight_boost.txt', 'playable_races_revisioned', 'multiplies spawn weight of high elves by 15x (1.5x core modifier) with 14 duplicate civilization definitions to give them equal worldgen standing alongside core civilizations.'),
     make_weight_tool('duergar-weights', 'duergar weight boost', 'playable_races_revisioned (161)', 'entity_duergar_weight_boost.txt', 'playable_races_revisioned', 'multiplies spawn weight of duergar deep dwarves by 15x (1.5x core modifier) with 14 duplicate civilization definitions to give them equal worldgen standing alongside core civilizations.'),
