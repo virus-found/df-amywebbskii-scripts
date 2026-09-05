@@ -9,7 +9,7 @@ INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (1)
 
 UPLOAD_MODS_DIR = $(B12_DIR)/mods/mod_upload/amywebbskii_scripts
 
-.PHONY: all install install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights status
+.PHONY: all install install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits status
 
 all: status
 
@@ -21,7 +21,7 @@ status:
 	@echo "  Local Mod:      $(LOCAL_MODS_DIR)"
 	@echo "  Installed Mod:  $(INSTALLED_MODS_DIR)"
 
-install: install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights
+install: install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits
 
 install-scripts:
 	@mkdir -p "$(SCRIPTS_DIR)"
@@ -92,3 +92,7 @@ patch-subraces-weights:
 	@python3 tools/patch_mau_weights.py --apply
 	@python3 tools/patch_nillians_weights.py --apply
 	@python3 tools/patch_trolls_weights.py --apply
+
+patch-lizardmen-gaits:
+	@python3 tools/patch_lizardmen_gaits.py --apply
+

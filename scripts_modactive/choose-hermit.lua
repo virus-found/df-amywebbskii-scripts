@@ -992,7 +992,7 @@ function apply_hermit(target_unit)
 
     -- gracefully invoke companion hermit tools if installed
     safe_run_command('enable', 'hermit')
-    safe_run_command('hermit-no-wagon')
+    safe_run_command('wagonless-hermit')
     df.global.pause_state = true
     return true
 end
@@ -1034,34 +1034,31 @@ function ChooseHermitWindow:init()
         local first_name = (u.name.first_name and #u.name.first_name > 0) and u.name.first_name:lower() or "unnamed"
         local sex_str = (u.sex == 0) and "female" or ((u.sex == 1) and "male" or "neuter")
         local age_int = math.floor(dfhack.units.getAge(u, true))
-        local prof_str = (dfhack.units.getProfessionName(u) or "peasant"):lower()
+        local bio_str = string.format("%s, %d", sex_str, age_int)
 
-        local willpower = 1000
-        local focus = 1000
         local stress_vuln = 50
+        local willpower = 1000
+        local bravery = 50
         local cheer = 50
 
         local soul = u.status and u.status.current_soul
         if soul then
-            if soul.mental_attrs then
-                if soul.mental_attrs[df.mental_attribute_type.WILLPOWER] then
-                    willpower = soul.mental_attrs[df.mental_attribute_type.WILLPOWER].value
-                end
-                if soul.mental_attrs[df.mental_attribute_type.FOCUS] then
-                    focus = soul.mental_attrs[df.mental_attribute_type.FOCUS].value
-                end
+            if soul.mental_attrs and soul.mental_attrs[df.mental_attribute_type.WILLPOWER] then
+                willpower = soul.mental_attrs[df.mental_attribute_type.WILLPOWER].value
             end
             if soul.personality then
                 stress_vuln = soul.personality.traits[df.personality_facet_type.STRESS_VULNERABILITY] or 50
+                bravery = soul.personality.traits[df.personality_facet_type.BRAVERY] or 50
                 cheer = soul.personality.traits[df.personality_facet_type.CHEER_PROPENSITY] or 50
             end
         end
 
-        local line = string.format("[%d] %-14.14s | %-6.6s | age:%-3d | %-16.16s | stress:%-2d | will:%-4d | focus:%-4d | cheer:%-2d",
-            idx, first_name, sex_str, age_int, prof_str, stress_vuln, willpower, focus, cheer)
+        local line = string.format("[%d] %-14.14s | %-12.12s | stress:%-2d | will:%-4d | brave:%-2d | cheer:%-2d",
+            idx, first_name, bio_str, stress_vuln, willpower, bravery, cheer)
 
         table.insert(choices, {
             text=line,
+            search_key=first_name,
             unit=u,
         })
     end

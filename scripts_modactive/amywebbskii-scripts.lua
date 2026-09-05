@@ -279,6 +279,68 @@ local function set_vanilla_kobold_name(enable)
     return true
 end
 
+local function get_lizardmen_gaits_targets()
+    local home = os.getenv('HOME')
+    if not home then return {} end
+    return {
+        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/topples_cv_lizardmen (212)/objects/creature_lizardman.txt',
+        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/3022911723 (212)/objects/creature_lizardman.txt',
+        home .. '/games/steam/steamapps/workshop/content/975370/3022911723/objects/creature_lizardman.txt',
+        home .. '/games/steam/steamapps/common/Dwarf Fortress/data/installed_mods/topples_cv_lizardmen (212)/objects/creature_lizardman.txt',
+    }
+end
+
+local function is_lizardmen_gaits_installed()
+    for _, p in ipairs(get_lizardmen_gaits_targets()) do
+        local f = io.open(p, 'r')
+        if f then f:close() ; return true end
+    end
+    return false
+end
+
+local function is_lizardmen_gaits_active()
+    for _, p in ipairs(get_lizardmen_gaits_targets()) do
+        local f = io.open(p, 'r')
+        if f then
+            local txt = f:read('*a')
+            f:close()
+            if txt:find('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+                return true
+            elseif txt:find('%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+                return false
+            end
+        end
+    end
+    return false
+end
+
+local function set_lizardmen_gaits(enable)
+    local target_gait = '[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS:900:750:600:439:1900:2900] 20 kph'
+    local patched_token = '[SELECT_CASTE:ALL]\n\t' .. target_gait
+
+    for _, p in ipairs(get_lizardmen_gaits_targets()) do
+        local f = io.open(p, 'r')
+        if f then
+            local txt = f:read('*a')
+            f:close()
+            if enable then
+                if not txt:find('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+                    txt = txt:gsub('%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS:900:750:600:439:1900:2900%] 20 kph', patched_token)
+                    local out = io.open(p, 'w')
+                    if out then out:write(txt) ; out:close() end
+                end
+            else
+                if txt:find('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+                    txt = txt:gsub('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS:900:750:600:439:1900:2900%] 20 kph', target_gait)
+                    local out = io.open(p, 'w')
+                    if out then out:write(txt) ; out:close() end
+                end
+            end
+        end
+    end
+    return true
+end
+
 local function get_amy_bundle_objects_dirs()
     local home = os.getenv('HOME')
     local dirs = {}
@@ -730,6 +792,30 @@ local TOOLS = {
                 print(('amywebbskii-scripts: vanilla kobold name %s. restart dwarf fortress to reload native raws.'):format(s))
             else
                 dfhack.printerr('amywebbskii-scripts: failed to update kobold names')
+            end
+        end,
+    },
+    {
+        key = 'lizardmen-gaits',
+        name = 'lizardman female & caste gaits',
+        category = 'raw patch',
+        is_raw_patch = true,
+        patch_type = 'mod patch',
+        depends_on = 'topples_cv_lizardmen',
+        load_order = 'n/a',
+        game_restart = 'required',
+        new_world = 'not required',
+        check_installed = is_lizardmen_gaits_installed,
+        desc = 'fixes topples lizardmen raw bug where gaits were placed after male castes without select_caste:all, restoring 8 km/h sprint and 5 km/h innate swim to all female castes.',
+        get_status = is_lizardmen_gaits_active,
+        toggle = function()
+            local cur = is_lizardmen_gaits_active()
+            local ok = set_lizardmen_gaits(not cur)
+            if ok then
+                local s = (not cur) and 'enabled (restored select_caste:all before gaits for all castes)' or 'disabled (reverted to male-only gaits)'
+                print(('amywebbskii-scripts: lizardman caste gaits %s. restart dwarf fortress to reload native raws.'):format(s))
+            else
+                dfhack.printerr('amywebbskii-scripts: failed to update lizardman gaits')
             end
         end,
     },

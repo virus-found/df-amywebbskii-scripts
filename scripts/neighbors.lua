@@ -706,17 +706,17 @@ function scan_neighbors()
             world_y = df.global.plotinfo.main.fortress_site.pos.y
         end
     else
-        local reg_x = safe_get(function() return scr.location.region_pos.x end)
-        local reg_y = safe_get(function() return scr.location.region_pos.y end)
         local hover_x = safe_get(function() return scr.neighbor_hover_ax end)
         local hover_y = safe_get(function() return scr.neighbor_hover_ay end)
+        local reg_x = safe_get(function() return scr.location.region_pos.x end)
+        local reg_y = safe_get(function() return scr.location.region_pos.y end)
 
-        if reg_x and reg_y and reg_x >= 0 and reg_y >= 0 then
-            world_x = reg_x
-            world_y = reg_y
-        elseif hover_x and hover_y and hover_x >= 0 and hover_y >= 0 then
+        if hover_x and hover_y and hover_x >= 0 and hover_y >= 0 then
             world_x = hover_x
             world_y = hover_y
+        elseif reg_x and reg_y and reg_x >= 0 and reg_y >= 0 then
+            world_x = reg_x
+            world_y = reg_y
         else
             local loc_x = safe_get(function() return scr.location.x end)
             local loc_y = safe_get(function() return scr.location.y end)
