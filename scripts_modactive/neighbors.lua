@@ -71,21 +71,54 @@ local function is_land_connected(x1, y1, x2, y2)
     return true
 end
 
+-- checks if an entity is an active necromancer coven / tower faction
+local function is_tower_faction(ent)
+    if not ent then return false end
+    if ent.entity_raw then
+        local code = tostring(ent.entity_raw.code or ""):upper()
+        if code:find("TOWER") or code:find("NECRO") then
+            return true
+        end
+    end
+    -- towers are independent site governments or outcasts, never sovereign civilizations, guilds, or religions
+    if ent.type ~= df.historical_entity_type.SiteGovernment and ent.type ~= df.historical_entity_type.Outcast then
+        return false
+    end
+    -- check leadership assignments for necromancers with animate/undead secrets
+    local assigns = safe_get(function() return ent.positions and ent.positions.assignments end)
+    if assigns then
+        for _, a in ipairs(assigns) do
+            local hf = safe_get(function() return df.historical_figure.find(a.histfig) end)
+            if hf and hf.died_year < 0 and hf.info and hf.info.curse and #hf.info.curse.can_do > 0 then
+                for _, inter in ipairs(hf.info.curse.can_do) do
+                    local iname = inter.name or ""
+                    if iname:find("SECRET_ANIMATE") or iname:find("DEITY_NECRO") or iname:find("SECRET_GHOUL") or iname:find("SECRET_UNDEAD") then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- resolves any site government or sub-entity to its parent civilization if linked
 local function get_effective_civ(ent)
     if not ent then return nil end
-    if ent.type == df.historical_entity_type.Civilization then
+    if is_tower_faction(ent) then
         return ent
     end
-    if ent.type == df.historical_entity_type.Tower or (ent.entity_raw and ent.entity_raw.code:find("TOWER")) then
+    if ent.type == df.historical_entity_type.Civilization then
         return ent
     end
     local links = safe_get(function() return ent.entity_links end)
     if links then
         for _, link in ipairs(links) do
-            local target = safe_get(function() return df.historical_entity.find(link.target) end)
-            if target and target.type == df.historical_entity_type.Civilization then
-                return target
+            if link.type == df.entity_entity_link_type.PARENT then
+                local target = safe_get(function() return df.historical_entity.find(link.target) end)
+                if target and target.type == df.historical_entity_type.Civilization then
+                    return target
+                end
             end
         end
     end
@@ -95,17 +128,8 @@ end
 -- formats entity race cleanly, detecting towers and necromancer factions
 local function format_entity_race(ent)
     if not ent then return "unknown" end
-    if ent.type == df.historical_entity_type.Tower or (ent.entity_raw and ent.entity_raw.code:find("TOWER")) then
+    if is_tower_faction(ent) then
         return "tower"
-    end
-    local links = safe_get(function() return ent.entity_links end)
-    if links then
-        for _, el in ipairs(links) do
-            local parent = safe_get(function() return df.historical_entity.find(el.target) end)
-            if parent and (parent.type == df.historical_entity_type.Tower or (parent.entity_raw and parent.entity_raw.code:find("TOWER"))) then
-                return "tower"
-            end
-        end
     end
     if ent.race >= 0 and df.creature_raw.find(ent.race) then
         return df.creature_raw.find(ent.race).name[1]:lower()
@@ -151,6 +175,14 @@ local function get_site_active_occupant(site)
         return df.historical_entity.find(site.civ_id)
     end
     return nil
+end
+
+-- checks if a site is a necromancer tower
+local function is_tower_site(site)
+    if not site then return false end
+    local owner = get_site_active_occupant(site) or (site.cur_owner_id and site.cur_owner_id >= 0 and df.historical_entity.find(site.cur_owner_id)) or (site.civ_id and site.civ_id >= 0 and df.historical_entity.find(site.civ_id))
+    if is_tower_faction(owner) then return true end
+    return false
 end
 
 -- calculates compact lowercase cardinal direction abbreviation matching vanilla DF
@@ -361,6 +393,9 @@ end
 -- formats site type names cleanly in lowercase matching vanilla DF site classification
 local function format_site_type(site)
     if not site then return "" end
+    if is_tower_site(site) then
+        return "tower"
+    end
     local raw_t = safe_get(function() return df.world_site_type[site.type] or site.type end)
     if not raw_t then return "" end
     local t_str = tostring(raw_t):lower():gsub("_", " ")
@@ -512,9 +547,13 @@ local function get_site_urban_summary(s)
     local r = s.realization
     local stype = (df.world_site_type[s.type] or 'site'):lower()
 
-    local castles, towers, walls = 0, 0, 0
+    local castles, towers, walls, trenches = 0, 0, 0, 0
     local taverns, temples, libraries, guildhalls, counting_houses, wells, markets, warehouses = 0, 0, 0, 0, 0, 0, 0, 0
-    local houses, shops, courtyards, pastures = 0, 0, 0, 0
+    local houses, shops, courtyards, pastures, cottages = 0, 0, 0, 0, 0
+    local necro_spires, barrows, shrines, tombs, vaults = 0, 0, 0, 0, 0
+    local mythical_lairs, mythical_palaces, mythical_dungeons = 0, 0, 0
+    local dormitories, dining_halls, entrances = 0, 0, 0
+    local tree_houses, hillock_houses, mead_halls = 0, 0, 0
     local underground_layers = 0
 
     if r then
@@ -526,18 +565,34 @@ local function get_site_urban_summary(s)
                 local b = r.buildings[i]
                 local bt = df.site_realization_building_type[b.type]
                 if bt == 'castle_wall' then walls = walls + 1
-                elseif bt == 'castle_tower' then towers = towers + 1
+                elseif bt == 'castle_tower' or bt == 'great_tower' or bt == 'city_tower' then towers = towers + 1
+                elseif bt == 'necromancer_tower' then necro_spires = necro_spires + 1
+                elseif bt == 'barrow' then barrows = barrows + 1
+                elseif bt == 'mythical_lair' then mythical_lairs = mythical_lairs + 1
+                elseif bt == 'mythical_palace' then mythical_palaces = mythical_palaces + 1
+                elseif bt == 'mythical_dungeon' then mythical_dungeons = mythical_dungeons + 1
+                elseif bt == 'fortress_entrance' then entrances = entrances + 1
+                elseif bt == 'dormitory' then dormitories = dormitories + 1
+                elseif bt == 'dininghall' then dining_halls = dining_halls + 1
+                elseif bt == 'shrine' then shrines = shrines + 1
+                elseif bt == 'tomb' then tombs = tombs + 1
+                elseif bt == 'vault' then vaults = vaults + 1
+                elseif bt == 'tree_house' then tree_houses = tree_houses + 1
+                elseif bt == 'hillock_house' then hillock_houses = hillock_houses + 1
+                elseif bt == 'mead_hall' then mead_halls = mead_halls + 1
+                elseif bt == 'cottage_plot' then cottages = cottages + 1
+                elseif bt == 'trenches' then trenches = trenches + 1
                 elseif bt == 'tavern' then taverns = taverns + 1
                 elseif bt == 'temple' then temples = temples + 1
                 elseif bt == 'library' then libraries = libraries + 1
-                elseif bt == 'guildhall' then guildhalls = guildhalls + 1
+                elseif bt == 'guildhall' or bt == 'guild_hall' then guildhalls = guildhalls + 1
                 elseif bt == 'counting_house' then counting_houses = counting_houses + 1
                 elseif bt == 'well' then wells = wells + 1
                 elseif bt == 'market_square' then markets = markets + 1
                 elseif bt == 'warehouse' then warehouses = warehouses + 1
                 elseif bt == 'shop_house' then shops = shops + 1
                 elseif bt == 'house' then houses = houses + 1
-                elseif bt == 'courtyard' then courtyards = courtyards + 1
+                elseif bt == 'courtyard' or bt == 'castle_courtyard' then courtyards = courtyards + 1
                 elseif bt == 'pasture' then pastures = pastures + 1
                 end
             end
@@ -554,24 +609,57 @@ local function get_site_urban_summary(s)
             elseif bt == 'GUILDHALL' and guildhalls == 0 then guildhalls = guildhalls + 1
             elseif bt == 'COUNTING_HOUSE' and counting_houses == 0 then counting_houses = counting_houses + 1
             elseif bt == 'MARKET' and markets == 0 then markets = markets + 1
+            elseif bt == 'TOMB' and tombs == 0 then tombs = tombs + 1
+            elseif bt == 'DARK_TOWER' and towers == 0 then towers = towers + 1
+            elseif bt == 'MEAD_HALL' and mead_halls == 0 then mead_halls = mead_halls + 1
             end
         end
     end
 
     local feat = {}
+    if necro_spires > 0 then
+        table.insert(feat, necro_spires == 1 and 'necromancer spire' or (necro_spires .. ' necromancer spires'))
+    end
+    if barrows > 0 then
+        table.insert(feat, barrows == 1 and 'barrow crypt' or (barrows .. ' barrow crypts'))
+    end
+    if mythical_lairs > 0 then
+        table.insert(feat, mythical_lairs == 1 and 'mythical beast lair' or (mythical_lairs .. ' mythical beast lairs'))
+    end
+    if mythical_palaces > 0 then
+        table.insert(feat, mythical_palaces == 1 and 'mythical palace' or (mythical_palaces .. ' mythical palaces'))
+    end
+    if mythical_dungeons > 0 then
+        table.insert(feat, mythical_dungeons == 1 and 'mythical dungeon labyrinth' or (mythical_dungeons .. ' mythical dungeon labyrinths'))
+    end
+    if entrances > 0 then
+        table.insert(feat, entrances == 1 and 'grand fortress entrance' or (entrances .. ' fortress gates'))
+    end
     if towers > 0 or walls > 0 then
         table.insert(feat, string.format('castle keep (%d towers, %d walls)', towers, walls))
     end
+    if trenches > 0 then
+        table.insert(feat, trenches == 1 and 'defensive trench' or (trenches .. ' defensive trenches'))
+    end
     if taverns > 0 then table.insert(feat, taverns == 1 and 'tavern' or (taverns .. ' taverns')) end
     if temples > 0 then table.insert(feat, temples == 1 and 'temple' or (temples .. ' temples')) end
+    if shrines > 0 then table.insert(feat, shrines == 1 and 'shrine' or (shrines .. ' shrines')) end
     if libraries > 0 then table.insert(feat, libraries == 1 and 'library' or (libraries .. ' libraries')) end
     if guildhalls > 0 then table.insert(feat, guildhalls == 1 and 'guildhall' or (guildhalls .. ' guildhalls')) end
     if counting_houses > 0 then table.insert(feat, 'counting house') end
     if markets > 0 then table.insert(feat, markets == 1 and 'market' or (markets .. ' market stalls')) end
     if shops > 0 then table.insert(feat, shops .. ' artisan shops') end
+    if dormitories > 0 then table.insert(feat, dormitories == 1 and 'dormitory' or (dormitories .. ' dormitories')) end
+    if dining_halls > 0 then table.insert(feat, dining_halls == 1 and 'great dining hall' or (dining_halls .. ' dining halls')) end
+    if mead_halls > 0 then table.insert(feat, 'mead hall') end
     if houses > 0 then table.insert(feat, houses .. ' houses') end
+    if cottages > 0 then table.insert(feat, cottages == 1 and 'cottage plot' or (cottages .. ' cottage plots')) end
+    if tree_houses > 0 then table.insert(feat, tree_houses == 1 and 'canopy tree dwelling' or (tree_houses .. ' canopy tree dwellings')) end
+    if hillock_houses > 0 then table.insert(feat, hillock_houses == 1 and 'hillock burrow' or (hillock_houses .. ' hillock burrows')) end
     if wells > 0 then table.insert(feat, wells == 1 and 'public well' or (wells .. ' wells')) end
     if warehouses > 0 then table.insert(feat, 'warehouse') end
+    if tombs > 0 then table.insert(feat, tombs == 1 and 'tomb chamber' or (tombs .. ' tomb chambers')) end
+    if vaults > 0 then table.insert(feat, 'sealed divine vault') end
 
     if underground_layers > 0 then
         table.insert(feat, string.format('%d subterranean layers', underground_layers))
@@ -581,46 +669,73 @@ local function get_site_urban_summary(s)
     if #feat > 0 then
         summary = table.concat(feat, ', ')
         if r and r.num_buildings and r.num_buildings > 0 then
-            summary = summary .. string.format(' [%d plots total]', r.num_buildings)
+            summary = summary .. string.format(' [%d %s total]', r.num_buildings, r.num_buildings == 1 and 'plot' or 'plots')
         end
     else
-        if s.type == df.world_site_type.Monument then
-            local tombs = 0
-            if s.buildings then
-                for i = 0, #s.buildings - 1 do
-                    if df.abstract_building_type[s.buildings[i]:getType()] == 'TOMB' then
-                        tombs = tombs + 1
-                    end
+        -- check subtype_info if realization has no specific building records
+        local sub = s.subtype_info
+        if sub and sub.fortress_type and sub.fortress_type >= 0 then
+            local ft = df.fortress_type[sub.fortress_type]
+            if ft == 'TOWER' then
+                if is_tower_site(s) or s.type == df.world_site_type.Tower then
+                    summary = 'necromancer tower spire & defensive perimeter'
+                else
+                    summary = 'fortified tower spire & defensive perimeter'
                 end
+            elseif ft == 'MONASTERY' then
+                summary = 'monastic retreat & temple sanctuaries'
+            elseif ft == 'FORT' then
+                summary = 'military fort & defensive ramparts'
+            elseif ft == 'CASTLE' then
+                summary = 'fortified castle bastions'
             end
-            if tombs > 0 then
-                summary = string.format('ancient stone monument / dungeon labyrinth (%d tomb chambers)', tombs)
+        elseif sub and sub.monument_type and sub.monument_type >= 0 then
+            local mt = df.monument_type[sub.monument_type]
+            if mt == 'MYTHICAL' then
+                summary = 'ancient mythical ruins / labyrinth'
+            elseif mt == 'TOMB' then
+                summary = 'ancient monumental tomb complex'
+            elseif mt == 'VAULT' then
+                summary = 'sealed divine vault'
+            end
+        elseif sub and sub.lair_type and sub.lair_type >= 0 then
+            local lt = df.lair_type[sub.lair_type]
+            if lt == 'LABYRINTH' then
+                summary = 'ancient subterranean labyrinth'
+            elseif lt == 'SHRINE' then
+                summary = 'consecrated beast shrine'
             else
+                summary = 'natural beast lair / cavern burrow'
+            end
+        end
+
+        if #summary == 0 then
+            if s.type == df.world_site_type.Monument then
                 summary = 'ancient stone monument / subterranean dungeon'
-            end
-        elseif s.type == df.world_site_type.Vault then
-            summary = 'sealed divine vault & ancient labyrinth'
-        elseif s.type == df.world_site_type.Camp then
-            summary = 'temporary nomadic campsite with tents & perimeter posts'
-        elseif s.type == df.world_site_type.Cave or s.type == df.world_site_type.LairShrine then
-            summary = 'natural cavern network / beast lair'
-        elseif s.type == df.world_site_type.MountainHalls or s.type == df.world_site_type.Fortress or s.type == df.world_site_type.DarkFortress then
-            local infra = s.infrastructure_pop_level or 0
-            if infra > 100 then
-                summary = string.format('deep subterranean fortress halls & bastions [infra level %d]', infra)
+            elseif s.type == df.world_site_type.Vault then
+                summary = 'sealed divine vault & ancient labyrinth'
+            elseif s.type == df.world_site_type.Camp then
+                summary = 'temporary nomadic campsite with tents & perimeter posts'
+            elseif s.type == df.world_site_type.Cave or s.type == df.world_site_type.LairShrine then
+                summary = 'natural cavern network / beast lair'
+            elseif s.type == df.world_site_type.MountainHalls or s.type == df.world_site_type.Fortress or s.type == df.world_site_type.DarkFortress then
+                local infra = s.infrastructure_pop_level or 0
+                if infra > 100 then
+                    summary = string.format('deep subterranean fortress halls & bastions [infra level %d]', infra)
+                else
+                    summary = 'subterranean fortress halls & defensive bastions'
+                end
+            elseif s.type == df.world_site_type.ForestRetreat then
+                summary = 'arboreal forest retreat with living canopy structures'
             else
-                summary = 'subterranean fortress halls & defensive bastions'
-            end
-        elseif s.type == df.world_site_type.ForestRetreat then
-            summary = 'arboreal forest retreat with living canopy structures'
-        else
-            local infra = s.infrastructure_pop_level or 0
-            if infra > 100 then
-                summary = string.format('developed settlement [infrastructure level %d]', infra)
-            elseif infra > 20 then
-                summary = string.format('small settlement [infrastructure level %d]', infra)
-            else
-                summary = 'primitive settlement / farmsteads'
+                local infra = s.infrastructure_pop_level or 0
+                if infra > 100 then
+                    summary = string.format('developed settlement [infrastructure level %d]', infra)
+                elseif infra > 20 then
+                    summary = string.format('small settlement [infrastructure level %d]', infra)
+                else
+                    summary = 'primitive settlement / farmsteads'
+                end
             end
         end
     end
@@ -653,7 +768,7 @@ local function split_text_wrap(str, max_len)
 end
 
 -- core data collector
-function scan_neighbors()
+function scan_neighbors(override_x, override_y)
     local scr = dfhack.gui.getDFViewscreen(true)
     local is_world = df.viewscreen_worldst:is_instance(scr)
     local is_fort = df.viewscreen_dwarfmodest:is_instance(scr) and dfhack.isMapLoaded()
@@ -692,7 +807,10 @@ function scan_neighbors()
     local world_x = 0
     local world_y = 0
 
-    if is_world then
+    if override_x and override_y then
+        world_x = override_x
+        world_y = override_y
+    elseif is_world then
         if scr.focus_ax and scr.focus_ay and scr.focus_ax >= 0 and scr.focus_ay >= 0 then
             world_x = scr.focus_ax
             world_y = scr.focus_ay
@@ -755,6 +873,17 @@ function scan_neighbors()
         end
     end
 
+    local hover_mm_sx = safe_get(function() return scr.neighbor_hover_mm_sx end)
+    local hover_mm_sy = safe_get(function() return scr.neighbor_hover_mm_sy end)
+    local hover_mm_ex = safe_get(function() return scr.neighbor_hover_mm_ex end)
+    local hover_mm_ey = safe_get(function() return scr.neighbor_hover_mm_ey end)
+    local has_hover_box = false
+    local hx1, hy1, hx2, hy2 = 0, 0, 0, 0
+    if hover_mm_sx and hover_mm_sy and hover_mm_ex and hover_mm_ey and hover_mm_sx >= 0 and hover_mm_sy >= 0 and hover_mm_ex >= hover_mm_sx and hover_mm_ey >= hover_mm_sy then
+        has_hover_box = true
+        hx1, hy1, hx2, hy2 = hover_mm_sx, hover_mm_sy, hover_mm_ex, hover_mm_ey
+    end
+
     for _, site in ipairs(sites) do
         local overlap_area = 0
         if is_embark_on_cursor then
@@ -765,31 +894,36 @@ function scan_neighbors()
             if ox2 >= ox1 and oy2 >= oy1 then
                 overlap_area = (ox2 - ox1 + 1) * (oy2 - oy1 + 1)
             end
+        elseif has_hover_box then
+            local ox1 = math.max(hx1, site.global_min_x)
+            local ox2 = math.min(hx2, site.global_max_x)
+            local oy1 = math.max(hy1, site.global_min_y)
+            local oy2 = math.min(hy2, site.global_max_y)
+            if ox2 >= ox1 and oy2 >= oy1 then
+                overlap_area = (ox2 - ox1 + 1) * (oy2 - oy1 + 1)
+            end
         end
+
+        local tx1 = math.max(t_min_x, site.global_min_x)
+        local tx2 = math.min(t_max_x, site.global_max_x)
+        local ty1 = math.max(t_min_y, site.global_min_y)
+        local ty2 = math.min(t_max_y, site.global_max_y)
+        local tile_overlap_area = (tx2 >= tx1 and ty2 >= ty1) and ((tx2 - tx1 + 1) * (ty2 - ty1 + 1)) or 0
 
         local in_pos = (site.pos.x == world_x and site.pos.y == world_y)
-
-        local is_candidate = false
-        if is_embark_on_cursor then
-            if overlap_area > 0 then
-                is_candidate = true
-            elseif in_pos and (site.type == df.world_site_type.Monument or site.type == df.world_site_type.Camp or site.type == df.world_site_type.Cave or site.type == df.world_site_type.LairShrine or site.type == df.world_site_type.Vault) then
-                is_candidate = true
-            end
-        else
-            if in_pos then
-                is_candidate = true
-            end
-        end
+        local is_candidate = (overlap_area > 0) or (tile_overlap_area > 0) or in_pos
 
         if is_candidate then
             local prio = get_site_category_priority(site)
+            local is_at_cursor = (overlap_area > 0) or in_pos or (tile_overlap_area > 0)
+            local cand_dist = is_at_cursor and 0 or math.sqrt((site.pos.x - world_x)^2 + (site.pos.y - world_y)^2)
             table.insert(candidate_sites, {
                 site = site,
                 prio = prio,
                 overlap_area = overlap_area,
+                tile_overlap_area = tile_overlap_area,
                 in_pos = in_pos,
-                dist = (in_pos and 0 or math.sqrt((site.pos.x - world_x)^2 + (site.pos.y - world_y)^2)),
+                dist = cand_dist,
             })
         end
     end
@@ -797,6 +931,7 @@ function scan_neighbors()
     if #candidate_sites > 0 then
         table.sort(candidate_sites, function(a, b)
             if a.overlap_area ~= b.overlap_area then return a.overlap_area > b.overlap_area end
+            if a.tile_overlap_area ~= b.tile_overlap_area then return a.tile_overlap_area > b.tile_overlap_area end
             if a.prio ~= b.prio then return a.prio > b.prio end
             if a.in_pos ~= b.in_pos then return a.in_pos end
             return a.dist < b.dist
@@ -925,9 +1060,7 @@ function scan_neighbors()
             local state = def_cand_state and def_cand_state[i]
 
             if civ and dist >= 0 then
-                local is_tower = (civ.type == df.historical_entity_type.Tower) or
-                                 (civ.entity_raw and civ.entity_raw.code:find("TOWER")) or
-                                 (site and (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault))
+                local is_tower = is_tower_site(site) or is_tower_faction(civ)
                 local eff_civ = is_tower and civ or (get_effective_civ(civ) or civ)
                 local eff_key = is_tower and (site and ("tower_" .. site.id) or ("tower_" .. civ.id)) or tostring(eff_civ.id)
 
@@ -976,6 +1109,7 @@ function scan_neighbors()
                         status = status_str,
                         status_pen = status_pen,
                         war_with_site = war_with_site,
+                        is_primary_site = false,
                     })
                 end
             end
@@ -989,10 +1123,8 @@ function scan_neighbors()
         if site and site_owner then
             local eff_civ = get_effective_civ(site_owner) or site_owner
             local sname = dfhack.translation.translateName(site.name, true)
-            local is_tower = (site_owner.type == df.historical_entity_type.Tower) or
-                             (site_owner.entity_raw and site_owner.entity_raw.code:find("TOWER")) or
-                             (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault)
-            local oname = is_tower and "Tower" or dfhack.translation.translateName(eff_civ.name, true)
+            local is_tower = is_tower_site(site) or is_tower_faction(site_owner)
+            local oname = is_tower and (site_owner and dfhack.translation.translateName(site_owner.name, true) or "Tower") or dfhack.translation.translateName(eff_civ.name, true)
             local orace = is_tower and "tower" or format_entity_race(eff_civ)
             local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
             if is_tower then
@@ -1013,9 +1145,9 @@ function scan_neighbors()
             local dist_val = 0
             local t_str = "here"
             if not is_primary and cand.dist and cand.dist > 0.05 then
-                dist_val = cand.dist
+                dist_val = math.max(1, math.floor(cand.dist + 0.5))
                 local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y)
-                t_str = format_travel_time(math.floor(cand.dist * 10), dir)
+                t_str = format_travel_time(dist_val, dir)
                 if t_str == "" then t_str = "here" end
             end
 
@@ -1058,87 +1190,78 @@ function scan_neighbors()
         end
     end
 
-    -- C. When not on embark screen or def_candidate is empty: dynamically collect reachable neighboring sites
-    if not def_candidate or #def_candidate == 0 then
-        local nearby_sites = {}
-        for _, s in ipairs(sites) do
-            local dx = s.pos.x - world_x
-            local dy = s.pos.y - world_y
-            local dist = math.sqrt(dx * dx + dy * dy)
-            if dist <= 5.0 and is_land_connected(world_x, world_y, s.pos.x, s.pos.y) then
-                table.insert(nearby_sites, {
-                    site = s,
-                    dist = dist,
-                })
-            end
+    -- C. Dynamically collect reachable nearby sites (fortresses, towers, independent governments, local settlements)
+    local nearby_sites = {}
+    for _, s in ipairs(sites) do
+        local dx = s.pos.x - world_x
+        local dy = s.pos.y - world_y
+        local dist = math.sqrt(dx * dx + dy * dy)
+        if dist <= 7.0 and dist > 0.05 and is_land_connected(world_x, world_y, s.pos.x, s.pos.y) then
+            table.insert(nearby_sites, {
+                site = s,
+                dist = dist,
+            })
         end
-        table.sort(nearby_sites, function(a, b) return a.dist < b.dist end)
+    end
+    table.sort(nearby_sites, function(a, b) return a.dist < b.dist end)
 
-        for _, cand in ipairs(nearby_sites) do
-            local site = cand.site
-            local site_owner = get_site_active_occupant(site) or df.historical_entity.find(site.cur_owner_id) or df.historical_entity.find(site.civ_id)
-            local eff_civ = site_owner and (get_effective_civ(site_owner) or site_owner) or nil
-            local is_tower = (site_owner and ((site_owner.type == df.historical_entity_type.Tower) or
-                             (site_owner.entity_raw and site_owner.entity_raw.code:find("TOWER")))) or
-                             (site.type == df.world_site_type.Tower or site.type == df.world_site_type.Vault)
-            local is_primary = (best_site and site.id == best_site.id)
+    for _, cand in ipairs(nearby_sites) do
+        local site = cand.site
+        local site_owner = get_site_active_occupant(site) or (site.cur_owner_id and site.cur_owner_id >= 0 and df.historical_entity.find(site.cur_owner_id)) or (site.civ_id and site.civ_id >= 0 and df.historical_entity.find(site.civ_id))
+        local is_tower = is_tower_site(site) or is_tower_faction(site_owner)
+        local eff_civ = is_tower and (site_owner or site) or (site_owner and (get_effective_civ(site_owner) or site_owner) or nil)
+        local eff_key = is_tower and ("tower_" .. site.id) or (eff_civ and tostring(eff_civ.id) or ("site_" .. site.id))
 
-            -- Omit non-primary unclaimed/wilderness sites (uncolonized shrines, ruins, empty lairs)
-            if is_primary or is_tower or (site_owner and eff_civ) then
-                local oname = is_tower and "Tower" or (eff_civ and dfhack.translation.translateName(eff_civ.name, true) or "unclaimed")
-                local orace = is_tower and "tower" or (eff_civ and format_entity_race(eff_civ) or "wilderness")
+        if not seen_site_ids[site.id] and (is_tower or not seen_entities[eff_key]) then
+            seen_site_ids[site.id] = true
+            seen_entities[eff_key] = true
 
-                if is_primary or (orace ~= "wilderness" and orace ~= "unknown") then
-                    local sname = dfhack.translation.translateName(site.name, true)
-                    local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
-                    if is_tower then
-                        status_str = "hostile"
-                        status_pen = COLOR_LIGHTRED
-                    end
-                    local stype = format_site_type(site)
-                    local site_live_pop = get_site_actual_live_pop(site, stype) or 0
-                    local hist_pop = format_population(site_live_pop)
-                    if hist_pop == "" then hist_pop = "few" end
+            local oname = is_tower and (site_owner and dfhack.translation.translateName(site_owner.name, true) or "Tower") or (eff_civ and dfhack.translation.translateName(eff_civ.name, true) or "unclaimed")
+            local orace = is_tower and "tower" or (eff_civ and format_entity_race(eff_civ) or "wilderness")
 
-                    local cand_pop_fmt = format_est_pop(site_live_pop)
-                    if is_primary then
-                        cand_pop_fmt = pop_fmt
-                    end
-
-                    local dist_val = cand.dist
-                    local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y)
-                    local t_str = format_travel_time(math.floor(cand.dist * 10), dir)
-                    if is_primary or cand.dist <= 0.05 then
-                        dist_val = 0
-                        t_str = "here"
-                    end
-
-                    local war_with_site = false
-                    if site_owner_entity and eff_civ and check_entities_at_war(site_owner_entity, eff_civ) then
-                        war_with_site = true
-                    end
-                    if is_tower and site_owner_entity then
-                        war_with_site = true
-                    end
-
-                    table.insert(entries, {
-                        civ = eff_civ,
-                        rname = orace,
-                        cname = oname,
-                        sname = sname,
-                        stype = stype,
-                        dist = dist_val,
-                        travel_str = t_str,
-                        history_pop = hist_pop,
-                        est_pop = cand_pop_fmt,
-                        war_str = war_with_site and "war vs site" or "",
-                        direction = dir,
-                        status = status_str,
-                        status_pen = status_pen,
-                        war_with_site = war_with_site,
-                        is_primary_site = is_primary,
-                    })
+            if orace ~= "wilderness" and orace ~= "unknown" then
+                local sname = dfhack.translation.translateName(site.name, true)
+                local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
+                if is_tower then
+                    status_str = "hostile"
+                    status_pen = COLOR_LIGHTRED
                 end
+                local stype = format_site_type(site)
+                local site_live_pop = get_site_actual_live_pop(site, stype) or 0
+                local hist_pop = format_population(site_live_pop)
+                if hist_pop == "" then hist_pop = "few" end
+
+                local cand_pop_fmt = format_est_pop(site_live_pop)
+
+                local dist_val = math.max(1, math.floor(cand.dist + 0.5))
+                local dir = calculate_direction(world_x, world_y, site.pos.x, site.pos.y)
+                local t_str = format_travel_time(dist_val, dir)
+
+                local war_with_site = false
+                if site_owner_entity and eff_civ and check_entities_at_war(site_owner_entity, eff_civ) then
+                    war_with_site = true
+                end
+                if is_tower then
+                    war_with_site = true
+                end
+
+                table.insert(entries, {
+                    civ = eff_civ,
+                    rname = orace,
+                    cname = oname,
+                    sname = sname,
+                    stype = stype,
+                    dist = dist_val,
+                    travel_str = t_str,
+                    history_pop = hist_pop,
+                    est_pop = cand_pop_fmt,
+                    war_str = war_with_site and "war vs site" or "",
+                    direction = dir,
+                    status = status_str,
+                    status_pen = status_pen,
+                    war_with_site = war_with_site,
+                    is_primary_site = false,
+                })
             end
         end
     end
@@ -1157,8 +1280,10 @@ function scan_neighbors()
     entries = unique_entries
 
     table.sort(entries, function(a, b)
-        if a.is_primary_site ~= b.is_primary_site then
-            return a.is_primary_site == true
+        local a_prim = (a.is_primary_site == true)
+        local b_prim = (b.is_primary_site == true)
+        if a_prim ~= b_prim then
+            return a_prim
         end
         local a_here = (a.travel_str == "here" or a.dist == 0)
         local b_here = (b.travel_str == "here" or b.dist == 0)
