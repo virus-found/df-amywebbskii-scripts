@@ -341,6 +341,79 @@ local function set_lizardmen_gaits(enable)
     return true
 end
 
+-- ---- mod patch helpers (better university 7-token reaction fix) -------------
+local function get_better_university_targets()
+    local home = os.getenv('HOME')
+    if not home then return {} end
+    return {
+        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/BetterUniversity (4)',
+        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/3525344907 (4)',
+        home .. '/games/steam/steamapps/workshop/content/975370/3525344907',
+        home .. '/games/steam/steamapps/common/Dwarf Fortress/data/installed_mods/BetterUniversity (4)',
+    }
+end
+
+local function is_better_university_installed()
+    for _, d in ipairs(get_better_university_targets()) do
+        local f = io.open(d .. '/info.txt', 'r')
+        if f then f:close() ; return true end
+    end
+    return false
+end
+
+local function get_better_university_version()
+    local max_ver = 0
+    for _, d in ipairs(get_better_university_targets()) do
+        local f = io.open(d .. '/info.txt', 'r')
+        if f then
+            for line in f:lines() do
+                local ver = line:match('%[NUMERIC_VERSION:(%d+)%]')
+                if ver then
+                    local n = tonumber(ver)
+                    if n and n > max_ver then max_ver = n end
+                end
+            end
+            f:close()
+        end
+    end
+    return max_ver
+end
+
+local function is_better_university_frozen()
+    local ver = get_better_university_version()
+    return ver > 4
+end
+
+local function is_better_university_patched()
+    local broken = ':GEM_OF_KNOWLEDGE:NONE]'
+    local checked_any = false
+    for _, d in ipairs(get_better_university_targets()) do
+        local test_f = io.open(d .. '/objects/reaction_training_hall_axe.txt', 'r')
+        if test_f then
+            checked_any = true
+            local txt = test_f:read('*a')
+            test_f:close()
+            if txt:find(broken, 1, true) then return false end
+        end
+    end
+    return checked_any
+end
+
+local function set_better_university_patch(enable)
+    if is_better_university_frozen() then
+        return false, 'upstream version > 4; patch is frozen and locked pending manual review'
+    end
+    local home = os.getenv('HOME')
+    if not home then return false, 'home directory not found' end
+    local script_p = home .. '/docs/games/df/amywebbskii-scripts/tools/patch_better_university_reactions.py'
+    local flag = enable and '--apply' or '--unapply'
+    local ret = os.execute(('python3 "%s" %s >/dev/null 2>&1'):format(script_p, flag))
+    if ret == 0 or ret == true then
+        return true
+    end
+    return false, 'patch script exited with error'
+end
+
 local function get_amy_bundle_objects_dirs()
     local home = os.getenv('HOME')
     local dirs = {}
@@ -827,6 +900,39 @@ local TOOLS = {
             end
         end,
     },
+    {
+        key = 'better-university-reactions',
+        name = 'better university reaction crash fix',
+        category = 'raw patch',
+        is_raw_patch = true,
+        patch_type = 'mod patch',
+        depends_on = 'BetterUniversity (3525344907)',
+        load_order = 'n/a',
+        game_restart = 'required',
+        new_world = 'not required',
+        check_installed = is_better_university_installed,
+        is_frozen = is_better_university_frozen,
+        desc = 'fixes 133 malformed 7-token reagent definitions in better university (dated aug 2 2025, version 4) that crash dwarf fortress with sigsegv when opening the labor screen; locks and freezes automatically if upstream version > 4.',
+        get_status = is_better_university_patched,
+        toggle = function()
+            if not is_better_university_installed() then
+                dfhack.printerr('amywebbskii-scripts: cannot toggle patch — target mod "BetterUniversity" is not installed.')
+                return
+            end
+            if is_better_university_frozen() then
+                dfhack.printerr('amywebbskii-scripts: cannot toggle patch — upstream version > 4; patch is locked pending manual review.')
+                return
+            end
+            local cur = is_better_university_patched()
+            local ok, err = set_better_university_patch(not cur)
+            if ok then
+                local s = (not cur) and 'enabled (fixed 133 reagent tokens to 6-element syntax)' or 'disabled (reverted to 7-token syntax)'
+                print(('amywebbskii-scripts: better university reaction fix %s. restart dwarf fortress to reload native raws.'):format(s))
+            else
+                dfhack.printerr(('amywebbskii-scripts: failed to toggle better university patch: %s'):format(tostring(err)))
+            end
+        end,
+    },
     make_weight_tool('5e-kobold-weights', '5e kobold weight boost', {'dnd_kobold_race (51)', 'dnd_kobold_race (1)'}, 'entity_5e_kobold_weight_boost.txt', 'dnd_kobold_race', 'multiplies spawn weight of 5e kobolds by 10x with 9 duplicate civilization definitions (5e_kobold_civ_2..10) to give them equal worldgen standing alongside core civilizations.'),
     make_weight_tool('intros-kobold-weights', 'intro kobold weight boost', 'intros_kobolds (21)', 'entity_intros_kobold_weight_boost.txt', 'intros_kobolds', 'multiplies spawn weight of intro\'s dragony kobolds by 10x with 9 duplicate civilization definitions (dragony_2..10) to give them equal worldgen standing alongside core civilizations.'),
     make_weight_tool('ha-weights', 'high adventure weight boost', 'HIGH_ADVENTURE (20)', 'entity_high_adventure_weight_boost.txt', 'high_adventure', 'multiplies spawn weight of all 9 high adventure civilizations (15x for core races, 10x for illithids/golems/succubi) with duplicate civ definitions; bundles illithid mountain/underdark cave site fixes, expanded start biomes, and baby/child reproduction tokens so illithid colonies successfully spawn and breed in worldgen.'),
@@ -1134,11 +1240,20 @@ function AmyWindow:refresh()
     for _, tool in ipairs(TOOLS) do
         if tool.is_raw_patch and not tool.is_weight_boost then
             local installed = not tool.check_installed or tool.check_installed()
+            local frozen = tool.is_frozen and tool.is_frozen()
             if not installed then
                 table.insert(choices, {
                     text = {
                         {text = '[-] ', pen = COLOR_DARKGREY},
                         {text = tool.name, pen = COLOR_DARKGREY},
+                    },
+                    item = tool,
+                })
+            elseif frozen then
+                table.insert(choices, {
+                    text = {
+                        {text = '[!] ', pen = COLOR_LIGHTRED},
+                        {text = tool.name .. ' (locked)', pen = COLOR_DARKGREY},
                     },
                     item = tool,
                 })
@@ -1208,6 +1323,10 @@ function AmyWindow:toggle_tool(tool)
         print(('amywebbskii-scripts: cannot toggle "%s" — required dependency "%s" is not installed.'):format(tool.name, tool.depends_on or 'unknown'))
         return
     end
+    if tool.is_frozen and tool.is_frozen() then
+        dfhack.printerr(('amywebbskii-scripts: cannot toggle "%s" — patch is locked (upstream version > 4; manual audit required).'):format(tool.name))
+        return
+    end
     if tool.is_bundle_module then
         if tool.toggle then tool.toggle() end
         self:refresh()
@@ -1238,6 +1357,7 @@ function AmyWindow:show_tool(tool)
     local deps = tool.depends_on or 'none'
     local deps_pen = COLOR_CYAN
     local installed = not tool.check_installed or tool.check_installed()
+    local frozen = tool.is_frozen and tool.is_frozen()
     if not installed then
         deps = deps .. ' (not installed)'
         deps_pen = COLOR_LIGHTRED
@@ -1248,6 +1368,9 @@ function AmyWindow:show_tool(tool)
     if not installed then
         status_text = '[-] target dependency missing'
         status_pen = COLOR_DARKGREY
+    elseif frozen then
+        status_text = '[!] locked / frozen (upstream version > 4; manual review required)'
+        status_pen = COLOR_LIGHTRED
     elseif tool.category == 'dfhack script' then
         local on = is_on(tool.key)
         status_text = on and '[x] autorun enabled (active on map load)' or '[ ] autorun disabled'
@@ -1263,8 +1386,8 @@ function AmyWindow:show_tool(tool)
     end
 
     self.subviews.tool_title:setText({
-        {text = tool.name, pen = not installed and COLOR_DARKGREY or COLOR_WHITE},
-        {text = ('  [%s]'):format(tool.category), pen = not installed and COLOR_DARKGREY or cat_color},
+        {text = tool.name, pen = (not installed or frozen) and COLOR_DARKGREY or COLOR_WHITE},
+        {text = ('  [%s]'):format(tool.category), pen = (not installed or frozen) and COLOR_DARKGREY or cat_color},
     })
 
     self.subviews.tool_meta:setText({
@@ -1292,6 +1415,10 @@ function AmyWindow:show_tool(tool)
 
     if not installed then
         self.subviews.toggle_label:setLabel('dep missing')
+        self.subviews.run_label.visible = false
+        self.subviews.run_label:setLabel('')
+    elseif frozen then
+        self.subviews.toggle_label:setLabel('locked (v>4)')
         self.subviews.run_label.visible = false
         self.subviews.run_label:setLabel('')
     elseif tool.category == 'dfhack script' then

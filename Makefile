@@ -9,7 +9,7 @@ INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (1)
 
 UPLOAD_MODS_DIR = $(B12_DIR)/mods/mod_upload/amywebbskii_scripts
 
-.PHONY: all install install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits patch-ha-illithid-spawns status
+.PHONY: all install install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits patch-ha-illithid-spawns patch-better-university status
 
 all: status
 
@@ -98,4 +98,7 @@ patch-lizardmen-gaits:
 
 patch-ha-illithid-spawns:
 	@python3 tools/patch_ha_illithid_spawns.py --apply
+
+patch-better-university:
+	@python3 tools/patch_better_university_reactions.py --apply
 
