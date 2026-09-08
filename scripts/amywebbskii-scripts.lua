@@ -206,12 +206,14 @@ end
 local function get_raw_patches_dir()
     local candidates = {}
     local base = get_base_dir()
+    table.insert(candidates, base .. 'data/installed_mods/amywebbskii_scripts (2)/raw_patches')
     table.insert(candidates, base .. 'data/installed_mods/amywebbskii_scripts (1)/raw_patches')
     table.insert(candidates, base .. 'mods/amywebbskii_scripts/raw_patches')
     local df_p = dfhack.getDFPath()
     if df_p and df_p ~= '' then
         table.insert(candidates, df_p .. '/dfhack-config/scripts/raw_patches')
         table.insert(candidates, df_p .. '/mods/amywebbskii_scripts/raw_patches')
+        table.insert(candidates, df_p .. '/data/installed_mods/amywebbskii_scripts (2)/raw_patches')
         table.insert(candidates, df_p .. '/data/installed_mods/amywebbskii_scripts (1)/raw_patches')
     end
     local home = os.getenv('HOME')
@@ -541,6 +543,7 @@ local function get_amy_bundle_objects_dirs()
     local dirs = {}
     local seen = {}
     local subpaths = {
+        'amywebbskii_scripts (2)/objects',
         'amywebbskii_scripts (1)/objects',
         'amywebbskii_scripts/objects',
     }

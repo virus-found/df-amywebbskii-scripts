@@ -1,6 +1,6 @@
 [ID:amywebbskii_scripts]
-[NUMERIC_VERSION:1]
-[DISPLAYED_VERSION:1.0.0]
+[NUMERIC_VERSION:2]
+[DISPLAYED_VERSION:2]
 [EARLIEST_COMPATIBLE_NUMERIC_VERSION:1]
 [EARLIEST_COMPATIBLE_DISPLAYED_VERSION:1.0.0]
 [AUTHOR:amywebbskii]
@@ -14,7 +14,7 @@ solo hermit & survival tools:
 - choose-hermit: select any single dwarf from your starting seven to embark as a lone hermit; remaining citizens are cleanly dismissed with their starting equipment preserved.
 - wagonless-hermit: eliminates the starting wagon and excess draft animals for true austere solo survival starts.
 - slow-digging: regulates mining speed to realistic thresholds, preventing rapid hollow-outs and emphasizing deliberate fortress excavation.
-- claim-foreign-items: automatically reclaims abandoned weapons, armor, and gear left behind by trade caravans and defeated invaders.
+- claim-foreign-items: automatically claims abandoned site items, weapons, armor, furniture, and gear left behind by trade caravans, ruins, and defeated invaders, immediately registering weapons for squad equipment.
 
 world & fortress inspection:
 - neighbors: interactive pre-embark and fortress inspector accessible via N key. displays true travel distances, live populations, settlement development, and bilateral diplomatic war/peace states with neighboring civilizations.
@@ -22,6 +22,7 @@ world & fortress inspection:
 game balance & climate modules:
 - early sieges: tunes hostile invasion triggers for earlier pressure.
 - cheaty plants: adds frost orchard trees and frost bulb crops adapted for extreme cold, barren mountains, and cavern climates, preventing civilization crop placement rejections.
+- bugfixes & balance patches: in-game switchboard toggles for velociraptor walk speed typo, better university labor crash fix, and playable civilization spawn weights.
 
 in-game launcher:
 open the unified switchboard launcher at any time via dfhack console: amywebbskii-scripts

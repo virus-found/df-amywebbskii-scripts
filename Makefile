@@ -5,7 +5,8 @@ B12_DIR ?= /home/gargantua/.local/share/Bay 12 Games/Dwarf Fortress
 SCRIPTS_DIR = $(DFHACK_DIR)/dfhack-config/scripts
 DOCS_SCRIPTS_DIR = /home/gargantua/docs/games/df/dfhack-config/scripts
 LOCAL_MODS_DIR = $(B12_DIR)/mods/amywebbskii_scripts
-INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (1)
+INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (2)
+INSTALLED_MODS_DIR_V1 = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (1)
 
 UPLOAD_MODS_DIR = $(B12_DIR)/mods/mod_upload/amywebbskii_scripts
 
@@ -20,6 +21,7 @@ status:
 	@echo "  Upload Mod:     $(UPLOAD_MODS_DIR)"
 	@echo "  Local Mod:      $(LOCAL_MODS_DIR)"
 	@echo "  Installed Mod:  $(INSTALLED_MODS_DIR)"
+	@echo "  Installed V1:   $(INSTALLED_MODS_DIR_V1)"
 
 install: install-scripts install-mod
 
@@ -69,6 +71,17 @@ install-mod:
 		cp -rpv raw_patches/* "$(INSTALLED_MODS_DIR)/raw_patches/" ; \
 	fi
 	@echo "Mod deployed to $(INSTALLED_MODS_DIR)"
+	@mkdir -p "$(INSTALLED_MODS_DIR_V1)"
+	@cp -pv info.txt preview.png "$(INSTALLED_MODS_DIR_V1)/"
+	@mkdir -p "$(INSTALLED_MODS_DIR_V1)/scripts_modactive" "$(INSTALLED_MODS_DIR_V1)/scripts_modinstalled" "$(INSTALLED_MODS_DIR_V1)/objects"
+	@cp -pv scripts_modactive/*.lua "$(INSTALLED_MODS_DIR_V1)/scripts_modactive/"
+	@cp -pv scripts_modactive/*.lua "$(INSTALLED_MODS_DIR_V1)/scripts_modinstalled/"
+	@cp -pv objects/*.txt* "$(INSTALLED_MODS_DIR_V1)/objects/" 2>/dev/null || true
+	@if [ -d raw_patches ] ; then \
+		mkdir -p "$(INSTALLED_MODS_DIR_V1)/raw_patches" ; \
+		cp -rpv raw_patches/* "$(INSTALLED_MODS_DIR_V1)/raw_patches/" ; \
+	fi
+	@echo "Mod deployed to $(INSTALLED_MODS_DIR_V1)"
 
 patch-vanilla:
 	@python3 tools/patch_vanilla_leather.py "$(DF_DIR)"
