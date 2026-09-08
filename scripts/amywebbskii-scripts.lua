@@ -9,18 +9,56 @@ local CONFIG_PATH = 'dfhack-config/amywebbskii-scripts.json'
 local INIT_PATH = dfhack.getDFPath() .. '/dfhack-config/init/onMapLoad.init'
 
 -- ---- path resolution helpers ------------------------------------------------
+local function get_base_dir()
+    local b = dfhack.filesystem.getBaseDir()
+    if not b or b == '' then
+        b = dfhack.getDFPath() .. '/'
+    end
+    if not b:match('[/\\]$') then
+        b = b .. '/'
+    end
+    return b
+end
+
 local function get_search_roots()
     local roots = {}
+    local base = get_base_dir()
+    table.insert(roots, base .. 'data/installed_mods')
+    table.insert(roots, base .. 'mods')
+
+    local df_p = dfhack.getDFPath()
+    if df_p and df_p ~= '' then
+        table.insert(roots, df_p .. '/data/installed_mods')
+        table.insert(roots, df_p .. '/mods')
+        table.insert(roots, df_p .. '/../../workshop/content/975370')
+    end
+
     local home = os.getenv('HOME')
     if home then
         table.insert(roots, home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods')
         table.insert(roots, home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods')
         table.insert(roots, home .. '/games/steam/steamapps/workshop/content/975370')
+        table.insert(roots, home .. '/Library/Application Support/Bay 12 Games/Dwarf Fortress/data/installed_mods')
+        table.insert(roots, home .. '/Library/Application Support/Bay 12 Games/Dwarf Fortress/mods')
     end
-    local df_p = dfhack.getDFPath()
-    table.insert(roots, df_p .. '/data/installed_mods')
-    table.insert(roots, df_p .. '/mods')
     return roots
+end
+
+local function find_installed_mod_objects_dir(folder)
+    for _, root in ipairs(get_search_roots()) do
+        local p = root .. '/' .. folder .. '/objects'
+        local f = io.open(root .. '/' .. folder .. '/info.txt', 'r')
+        if f then
+            f:close()
+            return p
+        end
+        local f_obj = io.open(p .. '/info.txt', 'r')
+        if f_obj then
+            f_obj:close()
+            return p
+        end
+    end
+    return nil
 end
 
 local function find_mod_objects_dir(target_keyword)
@@ -166,13 +204,26 @@ end
 
 -- ---- mod patch helpers (kobold civ diversity & weight boost) ----------------
 local function get_raw_patches_dir()
+    local candidates = {}
+    local base = get_base_dir()
+    table.insert(candidates, base .. 'data/installed_mods/amywebbskii_scripts (1)/raw_patches')
+    table.insert(candidates, base .. 'mods/amywebbskii_scripts/raw_patches')
+    local df_p = dfhack.getDFPath()
+    if df_p and df_p ~= '' then
+        table.insert(candidates, df_p .. '/dfhack-config/scripts/raw_patches')
+        table.insert(candidates, df_p .. '/mods/amywebbskii_scripts/raw_patches')
+        table.insert(candidates, df_p .. '/data/installed_mods/amywebbskii_scripts (1)/raw_patches')
+    end
     local home = os.getenv('HOME')
-    if not home then return nil end
-    local p = home .. '/docs/games/df/amywebbskii-scripts/raw_patches'
-    local f = io.open(p .. '/entity_vanilla_weight_boost.txt', 'r')
-    if f then
-        f:close()
-        return p
+    if home then
+        table.insert(candidates, home .. '/docs/games/df/amywebbskii-scripts/raw_patches')
+    end
+    for _, p in ipairs(candidates) do
+        local f = io.open(p .. '/entity_vanilla_weight_boost.txt', 'r')
+        if f then
+            f:close()
+            return p
+        end
     end
     return nil
 end
@@ -221,15 +272,31 @@ local function set_kobold_patch(enable)
 end
 
 local function get_kobold_name_targets()
-    local home = os.getenv('HOME')
-    if not home then return {} end
-    return {
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/dnd_kobold_race (51)/objects/creature_5e_kobold.txt',
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/dnd_kobold_race (1)/objects/creature_5e_kobold.txt',
-        home .. '/games/steam/steamapps/workshop/content/975370/3281525928/objects/creature_5e_kobold.txt',
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/intros_kobolds (21)/objects/creature_kobold.txt',
-        home .. '/games/steam/steamapps/workshop/content/975370/2902807802/objects/creature_kobold.txt',
+    local targets = {}
+    local subpaths = {
+        'dnd_kobold_race (51)/objects/creature_5e_kobold.txt',
+        'dnd_kobold_race (1)/objects/creature_5e_kobold.txt',
+        'dnd_kobold_race/objects/creature_5e_kobold.txt',
+        '3281525928/objects/creature_5e_kobold.txt',
+        'intros_kobolds (21)/objects/creature_kobold.txt',
+        'intros_kobolds/objects/creature_kobold.txt',
+        '2902807802/objects/creature_kobold.txt',
     }
+    local seen = {}
+    for _, root in ipairs(get_search_roots()) do
+        for _, sub in ipairs(subpaths) do
+            local p = root .. '/' .. sub
+            if not seen[p] then
+                local f = io.open(p, 'r')
+                if f then
+                    f:close()
+                    seen[p] = true
+                    table.insert(targets, p)
+                end
+            end
+        end
+    end
+    return targets
 end
 
 local function is_vanilla_kobold_name_installed()
@@ -280,14 +347,28 @@ local function set_vanilla_kobold_name(enable)
 end
 
 local function get_lizardmen_gaits_targets()
-    local home = os.getenv('HOME')
-    if not home then return {} end
-    return {
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/topples_cv_lizardmen (212)/objects/creature_lizardman.txt',
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/3022911723 (212)/objects/creature_lizardman.txt',
-        home .. '/games/steam/steamapps/workshop/content/975370/3022911723/objects/creature_lizardman.txt',
-        home .. '/games/steam/steamapps/common/Dwarf Fortress/data/installed_mods/topples_cv_lizardmen (212)/objects/creature_lizardman.txt',
+    local targets = {}
+    local subpaths = {
+        'topples_cv_lizardmen (212)/objects/creature_lizardman.txt',
+        'topples_cv_lizardmen/objects/creature_lizardman.txt',
+        '3022911723 (212)/objects/creature_lizardman.txt',
+        '3022911723/objects/creature_lizardman.txt',
     }
+    local seen = {}
+    for _, root in ipairs(get_search_roots()) do
+        for _, sub in ipairs(subpaths) do
+            local p = root .. '/' .. sub
+            if not seen[p] then
+                local f = io.open(p, 'r')
+                if f then
+                    f:close()
+                    seen[p] = true
+                    table.insert(targets, p)
+                end
+            end
+        end
+    end
+    return targets
 end
 
 local function is_lizardmen_gaits_installed()
@@ -304,7 +385,7 @@ local function is_lizardmen_gaits_active()
         if f then
             local txt = f:read('*a')
             f:close()
-            if txt:find('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+            if txt:find('%[SELECT_CASTE:ALL%]\r?\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
                 return true
             elseif txt:find('%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
                 return false
@@ -324,14 +405,14 @@ local function set_lizardmen_gaits(enable)
             local txt = f:read('*a')
             f:close()
             if enable then
-                if not txt:find('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+                if not txt:find('%[SELECT_CASTE:ALL%]\r?\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
                     txt = txt:gsub('%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS:900:750:600:439:1900:2900%] 20 kph', patched_token)
                     local out = io.open(p, 'w')
                     if out then out:write(txt) ; out:close() end
                 end
             else
-                if txt:find('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
-                    txt = txt:gsub('%[SELECT_CASTE:ALL%]\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS:900:750:600:439:1900:2900%] 20 kph', target_gait)
+                if txt:find('%[SELECT_CASTE:ALL%]\r?\n%s*%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS') then
+                    txt = txt:gsub('%[SELECT_CASTE:ALL%]\r?\n\t%[APPLY_CREATURE_VARIATION:STANDARD_WALK_CRAWL_GAITS:900:750:600:439:1900:2900%] 20 kph', target_gait)
                     local out = io.open(p, 'w')
                     if out then out:write(txt) ; out:close() end
                 end
@@ -343,22 +424,32 @@ end
 
 -- ---- mod patch helpers (better university 7-token reaction fix) -------------
 local function get_better_university_targets()
-    local home = os.getenv('HOME')
-    if not home then return {} end
-    return {
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/BetterUniversity (4)',
-        home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/3525344907 (4)',
-        home .. '/games/steam/steamapps/workshop/content/975370/3525344907',
-        home .. '/games/steam/steamapps/common/Dwarf Fortress/data/installed_mods/BetterUniversity (4)',
+    local targets = {}
+    local subpaths = {
+        'BetterUniversity (4)',
+        'BetterUniversity',
+        '3525344907 (4)',
+        '3525344907',
     }
+    local seen = {}
+    for _, root in ipairs(get_search_roots()) do
+        for _, sub in ipairs(subpaths) do
+            local p = root .. '/' .. sub
+            if not seen[p] then
+                local f = io.open(p .. '/info.txt', 'r')
+                if f then
+                    f:close()
+                    seen[p] = true
+                    table.insert(targets, p)
+                end
+            end
+        end
+    end
+    return targets
 end
 
 local function is_better_university_installed()
-    for _, d in ipairs(get_better_university_targets()) do
-        local f = io.open(d .. '/info.txt', 'r')
-        if f then f:close() ; return true end
-    end
-    return false
+    return #get_better_university_targets() > 0
 end
 
 local function get_better_university_version()
@@ -384,11 +475,21 @@ local function is_better_university_frozen()
     return ver > 4
 end
 
+local function get_better_university_rx_names()
+    local names = {}
+    for i = 1, 21 do
+        if i ~= 14 then -- 14 does not exist in BetterUniversity
+            table.insert(names, ('reaction_training_hall%d.txt'):format(i))
+        end
+    end
+    return names
+end
+
 local function is_better_university_patched()
     local broken = ':GEM_OF_KNOWLEDGE:NONE]'
     local checked_any = false
     for _, d in ipairs(get_better_university_targets()) do
-        local test_f = io.open(d .. '/objects/reaction_training_hall_axe.txt', 'r')
+        local test_f = io.open(d .. '/objects/reaction_training_hall1.txt', 'r')
         if test_f then
             checked_any = true
             local txt = test_f:read('*a')
@@ -403,67 +504,88 @@ local function set_better_university_patch(enable)
     if is_better_university_frozen() then
         return false, 'upstream version > 4; patch is frozen and locked pending manual review'
     end
-    local home = os.getenv('HOME')
-    if not home then return false, 'home directory not found' end
-    local script_p = home .. '/docs/games/df/amywebbskii-scripts/tools/patch_better_university_reactions.py'
-    local flag = enable and '--apply' or '--unapply'
-    local ret = os.execute(('python3 "%s" %s >/dev/null 2>&1'):format(script_p, flag))
-    if ret == 0 or ret == true then
-        return true
+    local targets = get_better_university_targets()
+    if #targets == 0 then return false, 'target mod "BetterUniversity" not found' end
+
+    local broken_tok = ':GEM_OF_KNOWLEDGE:NONE]'
+    local fixed_tok = ':GEM_OF_KNOWLEDGE]'
+    local from_tok = enable and broken_tok or fixed_tok
+    local to_tok = enable and fixed_tok or broken_tok
+    local pattern_tok = from_tok:gsub('%]', '%%]')
+
+    local rx_names = get_better_university_rx_names()
+
+    for _, d in ipairs(targets) do
+        local obj_dir = d .. '/objects'
+        for _, rf in ipairs(rx_names) do
+            local fpath = obj_dir .. '/' .. rf
+            local f = io.open(fpath, 'r')
+            if f then
+                local txt = f:read('*a')
+                f:close()
+                if txt:find(from_tok, 1, true) then
+                    local new_txt = txt:gsub(pattern_tok, to_tok)
+                    local out = io.open(fpath, 'w')
+                    if out then
+                        out:write(new_txt)
+                        out:close()
+                    end
+                end
+            end
+        end
     end
-    return false, 'patch script exited with error'
+    return true
 end
 
 local function get_amy_bundle_objects_dirs()
-    local home = os.getenv('HOME')
     local dirs = {}
+    local seen = {}
+    local subpaths = {
+        'amywebbskii_scripts (1)/objects',
+        'amywebbskii_scripts/objects',
+    }
+    for _, root in ipairs(get_search_roots()) do
+        for _, sub in ipairs(subpaths) do
+            local p = root .. '/' .. sub
+            if not seen[p] then
+                local f = io.open(p .. '/../info.txt', 'r') or io.open(p .. '/entity_early_sieges.txt', 'r') or io.open(p .. '/entity_early_sieges.txt.disabled', 'r')
+                if f then
+                    f:close()
+                    seen[p] = true
+                    table.insert(dirs, p)
+                end
+            end
+        end
+    end
+    local home = os.getenv('HOME')
     if home then
-        table.insert(dirs, home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/amywebbskii_scripts (1)/objects')
-        table.insert(dirs, home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/amywebbskii_scripts/objects')
-        table.insert(dirs, home .. '/docs/games/df/amywebbskii-scripts/objects')
+        local repo = home .. '/docs/games/df/amywebbskii-scripts/objects'
+        if not seen[repo] and (io.open(repo .. '/../info.txt', 'r') or io.open(repo .. '/entity_early_sieges.txt', 'r')) then
+            seen[repo] = true
+            table.insert(dirs, repo)
+        end
     end
     return dirs
 end
 
 local function is_amy_bundle_installed()
-    local home = os.getenv('HOME')
-    if not home then return false end
-    local p1 = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/amywebbskii_scripts (1)/info.txt'
-    local p2 = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/amywebbskii_scripts/info.txt'
-    local f1 = io.open(p1, 'r')
-    if f1 then f1:close() ; return true end
-    local f2 = io.open(p2, 'r')
-    if f2 then f2:close() ; return true end
-    return false
+    local dirs = get_amy_bundle_objects_dirs()
+    return #dirs > 0
 end
 
 local function is_bundle_module_active(raw_name)
-    local home = os.getenv('HOME')
-    if not home then return false end
-    local primary = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/amywebbskii_scripts (1)/objects/' .. raw_name
-    local f = io.open(primary, 'r')
-    if f then
-        f:close()
-        return true
-    end
-    local secondary = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/mods/amywebbskii_scripts/objects/' .. raw_name
-    local f2 = io.open(secondary, 'r')
-    if f2 then
-        f2:close()
-        return true
-    end
-    local repo = home .. '/docs/games/df/amywebbskii-scripts/objects/' .. raw_name
-    local f3 = io.open(repo, 'r')
-    if f3 then
-        f3:close()
-        return true
+    local dirs = get_amy_bundle_objects_dirs()
+    for _, d in ipairs(dirs) do
+        local f = io.open(d .. '/' .. raw_name, 'r')
+        if f then
+            f:close()
+            return true
+        end
     end
     return false
 end
 
 local function set_bundle_module(raw_name, enable)
-    local home = os.getenv('HOME')
-    if not home then return false, 'HOME environment variable not set' end
     local raw_dir = get_raw_patches_dir()
     local dirs = get_amy_bundle_objects_dirs()
     local success = false
@@ -473,7 +595,7 @@ local function set_bundle_module(raw_name, enable)
         local active_path = dir .. '/' .. raw_name
         local disabled_path = dir .. '/' .. raw_name .. '.disabled'
 
-        local test_f = io.open(dir .. '/../info.txt', 'r')
+        local test_f = io.open(dir .. '/../info.txt', 'r') or io.open(active_path, 'r') or io.open(disabled_path, 'r')
         if test_f then
             test_f:close()
             if enable then
@@ -517,53 +639,101 @@ local function set_bundle_module(raw_name, enable)
     end
     return success, err_msg
 end
-
 local function is_patch_file_present(mod_folders, file_name)
-    local home = os.getenv('HOME')
-    if not home then return false end
     local folders = type(mod_folders) == 'table' and mod_folders or {mod_folders}
     for _, folder in ipairs(folders) do
-        local p = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/' .. folder .. '/objects/' .. file_name
-        local f = io.open(p, 'r')
-        if f then
-            f:close()
-            return true
+        local obj_dir = find_installed_mod_objects_dir(folder)
+        if obj_dir then
+            local f = io.open(obj_dir .. '/' .. file_name, 'r')
+            if f then
+                f:close()
+                return true
+            end
         end
     end
     return false
 end
 
 local function purge_ha_old_files()
-    local home = os.getenv('HOME')
-    if not home then return end
-    local obj_dir = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/HIGH_ADVENTURE (20)/objects/'
-    os.remove(obj_dir .. 'entity_ha_kobold_weight_boost.txt')
-    os.remove(obj_dir .. 'entity_second_humans_weight_boost.txt')
+    local obj_dir = find_installed_mod_objects_dir('HIGH_ADVENTURE (20)') or find_installed_mod_objects_dir('HIGH_ADVENTURE')
+    if obj_dir then
+        os.remove(obj_dir .. '/entity_ha_kobold_weight_boost.txt')
+        os.remove(obj_dir .. '/entity_second_humans_weight_boost.txt')
+    end
+end
+
+local function set_ha_illithid_spawns(enable)
+    local candidate_names = {'HIGH_ADVENTURE (20)', 'HIGH_ADVENTURE', 'high-adventure'}
+    for _, c in ipairs(candidate_names) do
+        local od = find_installed_mod_objects_dir(c)
+        if od then
+            -- 1. entity
+            local ef_path = od .. '/entity_ha_illithid.txt'
+            local ef = io.open(ef_path, 'r')
+            if ef then
+                local txt = ef:read('*a')
+                ef:close()
+                if enable then
+                    txt = txt:gsub('%[DEFAULT_SITE_TYPE:DARK_FORTRESS%]\r?\n%s*%[LIKES_SITE:DARK_FORTRESS%]',
+                        '[DEFAULT_SITE_TYPE:CAVE_DETAILED]\n\t[LIKES_SITE:CAVE_DETAILED]\n\t[LIKES_SITE:DARK_FORTRESS]\n\t[TOLERATES_SITE:CAVE_DETAILED]\n\t[TOLERATES_SITE:DARK_FORTRESS]\n\t[TOLERATES_SITE:CAVE]\n\t[TOLERATES_SITE:CITY]')
+                    txt = txt:gsub('%[EXCLUSIVE_START_BIOME:MOUNTAIN%]',
+                        '[START_BIOME:MOUNTAIN]\n\t[START_BIOME:DESERT_ROCK]\n\t[START_BIOME:SUBTERRANEAN_CHASM]\n\t[START_BIOME:ANY_WETLAND]')
+                    txt = txt:gsub('%[MAX_STARTING_CIV_NUMBER:4%]', '[MAX_STARTING_CIV_NUMBER:50]')
+                else
+                    txt = txt:gsub('%[DEFAULT_SITE_TYPE:CAVE_DETAILED%]\r?\n%s*%[LIKES_SITE:CAVE_DETAILED%]\r?\n%s*%[LIKES_SITE:DARK_FORTRESS%]\r?\n%s*%[TOLERATES_SITE:CAVE_DETAILED%]\r?\n%s*%[TOLERATES_SITE:DARK_FORTRESS%]\r?\n%s*%[TOLERATES_SITE:CAVE%]\r?\n%s*%[TOLERATES_SITE:CITY%]',
+                        '[DEFAULT_SITE_TYPE:DARK_FORTRESS]\n\t[LIKES_SITE:DARK_FORTRESS]')
+                    txt = txt:gsub('%[START_BIOME:MOUNTAIN%]\r?\n%s*%[START_BIOME:DESERT_ROCK%]\r?\n%s*%[START_BIOME:SUBTERRANEAN_CHASM%]\r?\n%s*%[START_BIOME:ANY_WETLAND%]',
+                        '[EXCLUSIVE_START_BIOME:MOUNTAIN]')
+                    txt = txt:gsub('%[MAX_STARTING_CIV_NUMBER:50%]', '[MAX_STARTING_CIV_NUMBER:4]')
+                end
+                local out = io.open(ef_path, 'w')
+                if out then out:write(txt) ; out:close() end
+            end
+
+            -- 2. creature
+            local cf_path = od .. '/creature_ha_illithid.txt'
+            local cf = io.open(cf_path, 'r')
+            if cf then
+                local txt = cf:read('*a')
+                cf:close()
+                if enable then
+                    if not txt:find('%[BABY:1%]') then
+                        txt = txt:gsub('%[PREFSTRING:intelligence%]', '[PREFSTRING:intelligence]\n\t[BABY:1]\n\t[CHILD:12]')
+                    end
+                else
+                    txt = txt:gsub('%[PREFSTRING:intelligence%]\r?\n%s*%[BABY:1%]\r?\n%s*%[CHILD:12%]', '[PREFSTRING:intelligence]')
+                end
+                local out = io.open(cf_path, 'w')
+                if out then out:write(txt) ; out:close() end
+            end
+        end
+    end
+    return true
 end
 
 local function set_raw_patch_file(mod_folders, raw_name, enable)
-    local home = os.getenv('HOME')
-    if not home then return false, 'HOME environment variable not set' end
     local folders = type(mod_folders) == 'table' and mod_folders or {mod_folders}
     local success = false
     local err_msg = nil
     local raw_dir = get_raw_patches_dir()
 
     for _, folder in ipairs(folders) do
-        local obj_dir = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/' .. folder .. '/objects'
-        local dst_file = obj_dir .. '/' .. raw_name
-        if enable then
-            if not raw_dir then return false, 'raw_patches directory not found' end
-            local src_file = raw_dir .. '/' .. raw_name
-            local ok, err = copy_file(src_file, dst_file)
-            if ok then
-                success = true
+        local obj_dir = find_installed_mod_objects_dir(folder)
+        if obj_dir then
+            local dst_file = obj_dir .. '/' .. raw_name
+            if enable then
+                if not raw_dir then return false, 'raw_patches directory not found' end
+                local src_file = raw_dir .. '/' .. raw_name
+                local ok, err = copy_file(src_file, dst_file)
+                if ok then
+                    success = true
+                else
+                    err_msg = err
+                end
             else
-                err_msg = err
+                os.remove(dst_file)
+                success = true
             end
-        else
-            os.remove(dst_file)
-            success = true
         end
     end
     return success, err_msg
@@ -583,12 +753,8 @@ local function make_weight_tool(key, name, mod_folders, raw_name, deps_name, des
         game_restart = 'required',
         new_world = 'required',
         check_installed = function()
-            local home = os.getenv('HOME')
-            if not home then return false end
             for _, folder in ipairs(folders) do
-                local p = home .. '/.local/share/Bay 12 Games/Dwarf Fortress/data/installed_mods/' .. folder .. '/info.txt'
-                local f = io.open(p, 'r')
-                if f then f:close() ; return true end
+                if find_installed_mod_objects_dir(folder) then return true end
             end
             return false
         end,
@@ -600,12 +766,7 @@ local function make_weight_tool(key, name, mod_folders, raw_name, deps_name, des
             local cur = is_patch_file_present(folders, raw_name)
             if key == 'ha-weights' then
                 purge_ha_old_files()
-                local home = os.getenv('HOME')
-                if home then
-                    local script_p = home .. '/docs/games/df/amywebbskii-scripts/tools/patch_ha_illithid_spawns.py'
-                    local flag = (not cur) and '--apply' or '--unapply'
-                    os.execute(('python3 "%s" %s >/dev/null 2>&1'):format(script_p, flag))
-                end
+                set_ha_illithid_spawns(not cur)
             end
             local ok, err = set_raw_patch_file(folders, raw_name, not cur)
             if ok then
@@ -962,10 +1123,16 @@ local function load_config()
     end
     for _, t in ipairs(TOOLS) do
         if cfg.data[t.key] == nil then
-            if t.check_installed and not t.check_installed() then
-                cfg.data[t.key] = false
+            -- only 100% cross-platform memory-only dfhack scripts default to enabled
+            -- all raw patches, mod patches, and disk-modifying tools default to disabled (false)
+            if t.category == 'dfhack script' then
+                if t.check_installed and not t.check_installed() then
+                    cfg.data[t.key] = false
+                else
+                    cfg.data[t.key] = true
+                end
             else
-                cfg.data[t.key] = true
+                cfg.data[t.key] = false
             end
         end
     end

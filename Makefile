@@ -9,7 +9,7 @@ INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (1)
 
 UPLOAD_MODS_DIR = $(B12_DIR)/mods/mod_upload/amywebbskii_scripts
 
-.PHONY: all install install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits patch-ha-illithid-spawns patch-better-university status
+.PHONY: all install install-scripts install-mod install-all-patches patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits patch-ha-illithid-spawns patch-better-university status
 
 all: status
 
@@ -21,7 +21,9 @@ status:
 	@echo "  Local Mod:      $(LOCAL_MODS_DIR)"
 	@echo "  Installed Mod:  $(INSTALLED_MODS_DIR)"
 
-install: install-scripts install-mod patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits patch-ha-illithid-spawns
+install: install-scripts install-mod
+
+install-all-patches: patch-vanilla patch-velociraptor-speed patch-weights patch-kobold-name patch-kobold-weights patch-ha-weights patch-subraces-weights patch-lizardmen-gaits patch-ha-illithid-spawns patch-better-university
 
 install-scripts:
 	@mkdir -p "$(SCRIPTS_DIR)"
@@ -36,6 +38,10 @@ install-mod:
 	@cp -pv scripts_modactive/*.lua "$(UPLOAD_MODS_DIR)/scripts_modactive/"
 	@cp -pv scripts_modactive/*.lua "$(UPLOAD_MODS_DIR)/scripts_modinstalled/"
 	@cp -pv objects/*.txt* "$(UPLOAD_MODS_DIR)/objects/" 2>/dev/null || true
+	@if [ -d raw_patches ] ; then \
+		mkdir -p "$(UPLOAD_MODS_DIR)/raw_patches" ; \
+		cp -rpv raw_patches/* "$(UPLOAD_MODS_DIR)/raw_patches/" ; \
+	fi
 	@echo "Mod deployed to $(UPLOAD_MODS_DIR)"
 	@if [ "$$(realpath -q "$(LOCAL_MODS_DIR)")" != "$$(realpath -q .)" ] ; then \
 		mkdir -p "$(LOCAL_MODS_DIR)" ; \
@@ -44,6 +50,10 @@ install-mod:
 		cp -pv scripts_modactive/*.lua "$(LOCAL_MODS_DIR)/scripts_modactive/" ; \
 		cp -pv scripts_modactive/*.lua "$(LOCAL_MODS_DIR)/scripts_modinstalled/" ; \
 		cp -pv objects/*.txt* "$(LOCAL_MODS_DIR)/objects/" 2>/dev/null || true ; \
+		if [ -d raw_patches ] ; then \
+			mkdir -p "$(LOCAL_MODS_DIR)/raw_patches" ; \
+			cp -rpv raw_patches/* "$(LOCAL_MODS_DIR)/raw_patches/" ; \
+		fi ; \
 		echo "Mod deployed to $(LOCAL_MODS_DIR)" ; \
 	else \
 		echo "Local mod dir is symlinked to repo, skipping self-copy" ; \
@@ -54,6 +64,10 @@ install-mod:
 	@cp -pv scripts_modactive/*.lua "$(INSTALLED_MODS_DIR)/scripts_modactive/"
 	@cp -pv scripts_modactive/*.lua "$(INSTALLED_MODS_DIR)/scripts_modinstalled/"
 	@cp -pv objects/*.txt* "$(INSTALLED_MODS_DIR)/objects/" 2>/dev/null || true
+	@if [ -d raw_patches ] ; then \
+		mkdir -p "$(INSTALLED_MODS_DIR)/raw_patches" ; \
+		cp -rpv raw_patches/* "$(INSTALLED_MODS_DIR)/raw_patches/" ; \
+	fi
 	@echo "Mod deployed to $(INSTALLED_MODS_DIR)"
 
 patch-vanilla:
