@@ -40,12 +40,28 @@ Published as a unified Steam Workshop mod and standalone DFHack script repositor
 - **Mechanism**: Modifies `[MATERIAL_TEMPLATE:SKIN_TEMPLATE]` so creature skins yield size-proportional globs upon butchering, updating `[REACTION:TAN_A_HIDE]` and `[REACTION:MAKE_PARCHMENT]` to tan leather proportionally to animal mass.
 - **Why Integrated into this Bundle**: In modern Dwarf Fortress versions, loading Brom's original mod via the standard Mod Manager causes a hard duplicate reaction crash at worldgen (`Duplicate Object: reaction TAN_A_HIDE; Offending mods are broms_leather, vanilla_reactions`) because the engine prohibits mod files from redefining core vanilla reactions. To eliminate the friction of manually editing game files and prevent Steam game updates from silently wiping changes, `amywebbskii-scripts` includes both a 1-click in-game patch toggle in the GUI switchboard and an automated build hook (`tools/patch_vanilla_leather.py` / `make install`).
 
-### 8. **Core Vanilla & 3rd-Party Mod Patch Architecture**
-- **Principle**: All modifications to core game files or 3rd-party Steam Workshop mods must **never** be loose, unrecorded file edits. They must be maintained as managed, reproducible patches inside `amywebbskii-scripts`:
-  1. Source patch definitions stored in `raw_patches/` (e.g. `raw_patches/entity_vanilla_weight_boost.txt`).
-  2. Idempotent Python patch utilities in `tools/` with `--apply`, `--unapply`, and `--status` options.
-  3. Hooked into `Makefile` (`make install`, `make patch-weights`, `make patch-vanilla`).
-  4. Exposed via the in-game switchboard GUI (`CUSTOM_T` / `amywebbskii-scripts`) with top-level `Dependencies:` validation preventing broken file execution if the target mod is missing.
+### 8. core vanilla & 3rd-party mod patch architecture
+
+many great steam workshop mods and even base game files have small bugs, speed typos, crash-causing errors, or world generation imbalances (like custom races never founding kingdoms because the game's spawn math ignores them). instead of editing game files by hand and losing your changes whenever steam updates dwarf fortress, this suite provides safe, one-click fixes directly through the in-game switchboard menu (`CUSTOM_T` / `amywebbskii-scripts`).
+
+each fix can be toggled on or off individually, and automatically verifies that the required mod is actually installed before applying:
+
+- **cheaty plant (harsh climate & populous worldgen)**: adds hardy frost crops and frost apple orchards across all biomes and caverns, stopping world generation from failing or rejecting worlds when generating cold, desolate, or extreme climates.
+- **vanilla velociraptor walk speed fix**: fixes an old base game raw typo where velociraptor people crawled at 0.4 km/h instead of walking at normal humanoid speeds (4 km/h).
+- **better university reaction crash fix**: fixes broken workshop reaction syntax in the popular *better university* mod that causes an instant crash to desktop whenever you open the labor screen.
+- **vanilla kobold name restore**: restores the clean vanilla name "kobold" if custom kobold mods rename the base race to "cobald".
+- **lizardman female & caste gaits fix**: restores full 8 km/h sprint and 5 km/h swimming speeds for female lizardfolk in *topples' lizardmen* after an upstream mod tag oversight left them without proper movement speeds.
+- **core races weight boost (animal people balance)**: balances civilizations when using *all animal people civilized and playable*, ensuring standard fantasy kingdoms (dwarves, humans, elves, goblins, kobolds) aren't completely wiped out or crowded off the map by hundreds of beast nations.
+- **playable mod race civilization weight boosts**: in standard world generation, custom modded races often fail to spawn kingdoms because vanilla races have much higher priority. these simple toggles give custom races equal footing to build towns, spread across the map, and interact as neighbors:
+  - **high adventure**: boosts all 9 civilizations, including mountain/underdark cavern colonies and breeding fixes for illithids, plus golems and succubi.
+  - **dark elves (dark elves redux)**: establishes strong subterranean dark elven realms.
+  - **high elves & duergar (playable races revisioned)**: enables majestic high elven cities and deep duergar dwarven fortresses.
+  - **hobgoblins**: allows organized hobgoblin empires to establish a solid world footprint.
+  - **halflings (topples' halflings)**: ensures peaceful halfling shires and hamlets spawn across temperate lands.
+  - **lizardmen (topples' lizardmen)**: gives cold-blooded swamp and marsh kingdoms an equal chance to flourish.
+  - **kobolds (5e kobolds & intro's dragony kobolds)**: boosts small dragon-kin tribes into lasting world civilizations.
+  - **gnolls, ratfolk, valkyries & ixthids (sm / forked series)**: allows these distinct playable races to found settlements and trade with you.
+  - **crundlekin, lupines, avians, the mau (cat-people), nillians & playable trolls**: guarantees these unique fantasy races spawn in numbers and appear on your embark diplomacy screen.
 
 ---
 
