@@ -25,17 +25,43 @@ local function show_result_dialog(title, text, color)
     end)
 end
 
+local PRESERVE_CONTAINED_TYPES = {
+    [df.item_type.DRINK] = true,
+    [df.item_type.LIQUID_MISC] = true,
+    [df.item_type.GLOB] = true,
+    [df.item_type.POWDER_MISC] = true,
+    [df.item_type.SEEDS] = true,
+    [df.item_type.CHEESE] = true,
+    [df.item_type.FOOD] = true,
+    [df.item_type.MEAT] = true,
+    [df.item_type.FISH] = true,
+    [df.item_type.FISH_RAW] = true,
+    [df.item_type.PLANT] = true,
+    [df.item_type.PLANT_GROWTH] = true,
+    [df.item_type.VERMIN] = true,
+    [df.item_type.PET] = true,
+    [df.item_type.CORPSE] = true,
+    [df.item_type.CORPSEPIECE] = true,
+    [df.item_type.REMAINS] = true,
+    [df.item_type.EGG] = true,
+}
+
+local function is_in_stockpile(pos)
+    local bld = dfhack.buildings.findAtTile(pos)
+    return bld and bld:getType() == df.building_type.Stockpile
+end
+
 function claim_all_items(quiet, force)
     if not dfhack.isMapLoaded() or df.global.gamemode ~= df.game_mode.DWARF then
         if not quiet then dfhack.printerr('error: must be in a loaded fortress game to claim items.') end
-        return 0, 0, 0
+        return 0, 0, 0, 0
     end
 
     if not force and not is_launcher_enabled() then
         if not quiet then
             print('claim-foreign-items: auto-claim is disabled in the amywebbskii-scripts launcher.')
         end
-        return 0, 0, 0
+        return 0, 0, 0, 0
     end
 
     local site_data = dfhack.persistent.getSiteData(GLOBAL_KEY, {applied = false})
@@ -43,7 +69,7 @@ function claim_all_items(quiet, force)
         if not quiet then
             print('claim-foreign-items: all items on this site were already claimed. (use "run" or --force to re-scan).')
         end
-        return 0, 0, 0
+        return 0, 0, 0, 0
     end
 
     local utils = require('utils')
@@ -70,9 +96,45 @@ function claim_all_items(quiet, force)
     end
 
     local items_claimed = 0
+    local items_unpacked = 0
     local container_contents_dumped = 0
     local equip_indexed = 0
     local categories_updated = {}
+
+    -- 0. unpack equipment, weapons, and gear from loose ground containers
+    -- in worldgen ruins/towns, items trapped inside loose bags/boxes on the ground
+    -- have flags.in_inventory = true and pos = (-30000,-30000,-30000), making them
+    -- completely unreachable for civilian labors (mining, woodcutting) and hauling.
+    local unpacked_ids = {}
+    local unpacked_any = true
+    while unpacked_any do
+        unpacked_any = false
+        for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
+            if it.flags.container and it.flags.on_ground and not it.flags.in_building and not it.flags.removed and not it.flags.garbage_collect then
+                if dfhack.items.getHolderUnit(it) == nil and not is_in_stockpile(it.pos) and it.general_refs then
+                    for i = #it.general_refs - 1, 0, -1 do
+                        local ref = it.general_refs[i]
+                        if df.general_ref_contains_itemst:is_instance(ref) then
+                            local sub = df.item.find(ref.item_id)
+                            if sub and not unpacked_ids[sub.id] and not sub.flags.removed and not sub.flags.garbage_collect then
+                                if not PRESERVE_CONTAINED_TYPES[sub:getType()] then
+                                    if dfhack.items.moveToGround(sub, it.pos) then
+                                        sub.flags.forbid = false
+                                        if it.flags.dump then
+                                            sub.flags.dump = true
+                                        end
+                                        unpacked_ids[sub.id] = true
+                                        items_unpacked = items_unpacked + 1
+                                        unpacked_any = true
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
 
     for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
         -- 1. strip trader, foreign civilization, and worldgen site ownership locks
@@ -150,10 +212,16 @@ function claim_all_items(quiet, force)
     dfhack.persistent.saveSiteData(GLOBAL_KEY, {applied = true})
 
     if not quiet then
-        if items_claimed > 0 or equip_indexed > 0 then
-            local lines = {
-                string.format('claim-foreign-items: unlocked %d site item(s) for your fortress.', items_claimed)
-            }
+        if items_claimed > 0 or equip_indexed > 0 or items_unpacked > 0 then
+            local lines = {}
+            if items_claimed > 0 then
+                table.insert(lines, string.format('claim-foreign-items: unlocked %d site item(s) for your fortress.', items_claimed))
+            else
+                table.insert(lines, 'claim-foreign-items: scanned site items.')
+            end
+            if items_unpacked > 0 then
+                table.insert(lines, string.format('unpacked %d weapon(s), tool(s), and gear from loose containers to the ground.', items_unpacked))
+            end
             if equip_indexed > 0 then
                 table.insert(lines, string.format('%d weapons, armor, and gear are now ready for squad equipment.', equip_indexed))
             end
@@ -164,14 +232,18 @@ function claim_all_items(quiet, force)
         else
             print('claim-foreign-items: all items on the map are already claimed and available for use.')
         end
-    elseif items_claimed > 0 or equip_indexed > 0 then
-        local announcement = string.format('claim-foreign-items: unlocked %d site item(s), %d military item(s) ready for squads.', items_claimed, equip_indexed)
+    elseif items_claimed > 0 or equip_indexed > 0 or items_unpacked > 0 then
+        local announcement = string.format('claim-foreign-items: unlocked %d site item(s), unpacked %d from containers, %d military item(s) ready for squads.',
+            items_claimed, items_unpacked, equip_indexed)
         print(announcement)
         dfhack.gui.showAnnouncement(announcement, COLOR_GREEN)
 
         local dlg_lines = {
             string.format('unlocked %d abandoned site and foreign item(s) across the map.', items_claimed)
         }
+        if items_unpacked > 0 then
+            table.insert(dlg_lines, string.format('\nunpacked %d weapon(s), tool(s), and clothes from loose ground containers.', items_unpacked))
+        end
         if equip_indexed > 0 then
             table.insert(dlg_lines, string.format('\n%d weapons, armor, and gear pieces are now available for squad equipment.', equip_indexed))
         end
@@ -181,7 +253,7 @@ function claim_all_items(quiet, force)
         table.insert(dlg_lines, '\nall site weapons, armor, furniture, and containers are now claimed and ready for fortress use.')
         show_result_dialog('claim foreign items', table.concat(dlg_lines, ''), COLOR_GREEN)
     end
-    return items_claimed, container_contents_dumped, equip_indexed
+    return items_claimed, container_contents_dumped, equip_indexed, items_unpacked
 end
 
 local function print_help()
@@ -189,8 +261,8 @@ local function print_help()
 usage: claim_foreign_items [<command>] [options]
 
 removes invisible worldgen site, foreign, and merchant ownership locks from items,
-weapons, armor, furniture, and containers across the map, and indexes preplaced
-equipment for squad use.
+weapons, armor, furniture, and containers across the map, unpacks gear trapped
+inside loose ground containers, and indexes preplaced equipment for squad use.
 
 runs automatically on fresh embark (once per site) if enabled in amywebbskii-scripts
 launcher so all items in ruins/towns/monasteries are immediately accessible.
@@ -211,15 +283,28 @@ local function print_status()
     local foreign_count = 0
     local trader_count = 0
     local world_data_count = 0
+    local trapped_count = 0
     for _, it in ipairs(df.global.world.items.other.IN_PLAY) do
         if it.flags.foreign then foreign_count = foreign_count + 1 end
         if it.flags.trader then trader_count = trader_count + 1 end
         if it.world_data_id ~= -1 then world_data_count = world_data_count + 1 end
+        if it.flags.container and it.flags.on_ground and not it.flags.in_building and not it.flags.removed and not it.flags.garbage_collect then
+            if dfhack.items.getHolderUnit(it) == nil and not is_in_stockpile(it.pos) and it.general_refs then
+                for _, ref in ipairs(it.general_refs) do
+                    if df.general_ref_contains_itemst:is_instance(ref) then
+                        local sub = df.item.find(ref.item_id)
+                        if sub and not sub.flags.removed and not sub.flags.garbage_collect and not PRESERVE_CONTAINED_TYPES[sub:getType()] then
+                            trapped_count = trapped_count + 1
+                        end
+                    end
+                end
+            end
+        end
     end
     local site_data = dfhack.persistent.getSiteData(GLOBAL_KEY, {applied = false})
     local launcher_status = is_launcher_enabled() and 'enabled' or 'disabled'
-    local text = string.format('items currently locked on map: %d worldgen site (world_data_id), %d foreign, %d merchant/trader (launcher: %s, embark claim applied: %s).',
-        world_data_count, foreign_count, trader_count, launcher_status, tostring(site_data.applied))
+    local text = string.format('items currently locked on map: %d worldgen site (world_data_id), %d foreign, %d merchant/trader, %d trapped in loose containers (launcher: %s, embark claim applied: %s).',
+        world_data_count, foreign_count, trader_count, trapped_count, launcher_status, tostring(site_data.applied))
     print(text)
 end
 
