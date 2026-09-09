@@ -867,7 +867,7 @@ local TOOLS = {
         load_order = 'n/a',
         game_restart = 'not required',
         new_world = 'not required',
-        desc = 'slows down raw mining speed by a configurable multiplier to give fortress expansion deliberate pacing and architectural gravity.',
+        desc = 'slows down excavation speed with separate multipliers for rock/stone and fast materials (soil/sand/clay) to give fortress expansion deliberate pacing, while guaranteeing 100% native vanilla experience per mined tile.',
         enable = function()
             if not dfhack.isMapLoaded() then return end
             pcall(dfhack.run_command, 'enable', 'slow-digging')
@@ -876,7 +876,7 @@ local TOOLS = {
             pcall(dfhack.run_command, 'disable', 'slow-digging')
         end,
         run = function()
-            dfhack.run_command('slow-digging')
+            dfhack.run_command('slow-digging', 'gui')
         end,
     },
     {

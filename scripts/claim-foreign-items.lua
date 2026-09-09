@@ -33,7 +33,7 @@ function claim_all_items(quiet, force)
 
     if not force and not is_launcher_enabled() then
         if not quiet then
-            print('claim_foreign_items: disabled in amywebbskii-scripts launcher, skipping.')
+            print('claim-foreign-items: auto-claim is disabled in the amywebbskii-scripts launcher.')
         end
         return 0, 0, 0
     end
@@ -41,8 +41,7 @@ function claim_all_items(quiet, force)
     local site_data = dfhack.persistent.getSiteData(GLOBAL_KEY, {applied = false})
     if site_data.applied and not force then
         if not quiet then
-            local msg = 'claim_foreign_items: already claimed on embark for this site (use --force or "run" to override).'
-            print(msg)
+            print('claim-foreign-items: all items on this site were already claimed. (use "run" or --force to re-scan).')
         end
         return 0, 0, 0
     end
@@ -151,20 +150,36 @@ function claim_all_items(quiet, force)
     dfhack.persistent.saveSiteData(GLOBAL_KEY, {applied = true})
 
     if not quiet then
-        print(string.format('claim_foreign_items: successfully claimed %d item(s) (purged worldgen site/trader locks), indexed %d military item(s). propagated dump flag to %d contained item(s).',
-            items_claimed, equip_indexed, container_contents_dumped))
+        if items_claimed > 0 or equip_indexed > 0 then
+            local lines = {
+                string.format('claim-foreign-items: unlocked %d site item(s) for your fortress.', items_claimed)
+            }
+            if equip_indexed > 0 then
+                table.insert(lines, string.format('%d weapons, armor, and gear are now ready for squad equipment.', equip_indexed))
+            end
+            if container_contents_dumped > 0 then
+                table.insert(lines, string.format('marked %d item(s) inside dumped containers for dumping.', container_contents_dumped))
+            end
+            print(table.concat(lines, ' '))
+        else
+            print('claim-foreign-items: all items on the map are already claimed and available for use.')
+        end
     elseif items_claimed > 0 or equip_indexed > 0 then
-        local announcement = string.format('claim_foreign_items: unlocked %d site/foreign item(s), indexed %d military item(s).', items_claimed, equip_indexed)
+        local announcement = string.format('claim-foreign-items: unlocked %d site item(s), %d military item(s) ready for squads.', items_claimed, equip_indexed)
         print(announcement)
         dfhack.gui.showAnnouncement(announcement, COLOR_GREEN)
 
-        local dlg_text = string.format('successfully claimed and unlocked %d foreign/site item(s) across the map.\nindexed %d weapons, armor, and gear into military equipment.',
-            items_claimed, equip_indexed)
-        if container_contents_dumped > 0 then
-            dlg_text = dlg_text .. string.format('\npropagated dump flag to %d contained item(s).', container_contents_dumped)
+        local dlg_lines = {
+            string.format('unlocked %d abandoned site and foreign item(s) across the map.', items_claimed)
+        }
+        if equip_indexed > 0 then
+            table.insert(dlg_lines, string.format('\n%d weapons, armor, and gear pieces are now available for squad equipment.', equip_indexed))
         end
-        dlg_text = dlg_text .. '\n\nall site weapons, armor, furniture, and containers are now claimed and immediately available for squads and fortress use.'
-        show_result_dialog('claim foreign items', dlg_text, COLOR_GREEN)
+        if container_contents_dumped > 0 then
+            table.insert(dlg_lines, string.format('\nmarked %d item(s) inside dumped containers for dumping.', container_contents_dumped))
+        end
+        table.insert(dlg_lines, '\nall site weapons, armor, furniture, and containers are now claimed and ready for fortress use.')
+        show_result_dialog('claim foreign items', table.concat(dlg_lines, ''), COLOR_GREEN)
     end
     return items_claimed, container_contents_dumped, equip_indexed
 end
