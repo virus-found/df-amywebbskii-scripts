@@ -23,28 +23,11 @@ local DIGGING_JOB_TYPES = {
     [df.job_type.RemoveConstruction] = true,
 }
 
-local FAST_MATERIALS = {
-    [df.tiletype_material.SOIL] = true,
-    [df.tiletype_material.PLANT] = true,
-    [df.tiletype_material.ROOT] = true,
-    [df.tiletype_material.MUSHROOM] = true,
-}
-
-local function is_fast_material(pos)
-    if not pos then return false end
-    local tt = dfhack.maps.getTileType(pos)
-    if not tt then return false end
-    local mat = df.tiletype.attrs[tt].material
-    return FAST_MATERIALS[mat] == true
-end
-
 local function get_default_config()
     return {
         enabled = true,
-        rock_setting = '/5',
-        rock_multiplier = 5.0,
-        fast_setting = '/10',
-        fast_multiplier = 10.0,
+        setting = '/5',
+        multiplier = 5.0,
         include_smoothing = false,
     }
 end
@@ -61,15 +44,16 @@ for k, v in pairs(get_default_config()) do
     end
 end
 
--- migration from legacy single-multiplier schema if needed
-if config.data.duration_multiplier and not config.data.rock_multiplier then
-    config.data.rock_multiplier = tonumber(config.data.duration_multiplier) or 5.0
-    config.data.rock_setting = config.data.setting or ('/' .. tostring(config.data.rock_multiplier))
+-- cleanup legacy rock/fast fields and migrate to unified multiplier
+if config.data.rock_multiplier and not config.data.multiplier then
+    config.data.multiplier = tonumber(config.data.rock_multiplier) or 5.0
+    config.data.setting = config.data.rock_setting or '/5'
 end
-if not config.data.fast_multiplier then
-    config.data.fast_multiplier = 10.0
-    config.data.fast_setting = '/10'
-end
+config.data.rock_multiplier = nil
+config.data.rock_setting = nil
+config.data.fast_multiplier = nil
+config.data.fast_setting = nil
+config.data.duration_multiplier = nil
 config:write()
 
 state = state or {}
@@ -159,9 +143,7 @@ local function on_tick()
         return
     end
 
-    local rock_mult = tonumber(config.data.rock_multiplier) or 5.0
-    local fast_mult = tonumber(config.data.fast_multiplier) or 10.0
-
+    local mult = tonumber(config.data.multiplier) or 5.0
     state.job_ticks = state.job_ticks or {}
     local seen_jobs = {}
 
@@ -182,10 +164,7 @@ local function on_tick()
                 local jid = job.id
                 seen_jobs[jid] = true
 
-                local is_fast = is_fast_material(job.pos)
-                local job_mult = is_fast and fast_mult or rock_mult
-
-                if math.abs(job_mult - 1.0) >= 0.001 then
+                if math.abs(mult - 1.0) >= 0.001 then
                     local jdata = state.job_ticks[jid]
                     if not jdata then
                         jdata = {
@@ -194,8 +173,7 @@ local function on_tick()
                             last_val = job.completion_timer,
                             delay_count = 0,
                             ticks_worked = 0,
-                            is_fast = is_fast,
-                            multiplier = job_mult,
+                            multiplier = mult,
                         }
                         state.job_ticks[jid] = jdata
                     end
@@ -204,9 +182,9 @@ local function on_tick()
 
                     -- timer adjustments
                     if job.completion_timer < jdata.last_val then
-                        if job_mult > 1.0 then
-                            -- slowdown mode (/N): hold timer for (job_mult - 1) ticks
-                            local delay_target = math.floor(job_mult - 1.0 + 0.5)
+                        if mult > 1.0 then
+                            -- slowdown mode (/N): hold timer for (mult - 1) ticks
+                            local delay_target = math.floor(mult - 1.0 + 0.5)
                             if jdata.delay_count < delay_target then
                                 job.completion_timer = jdata.last_val
                                 jdata.delay_count = jdata.delay_count + 1
@@ -214,9 +192,9 @@ local function on_tick()
                                 jdata.last_val = job.completion_timer
                                 jdata.delay_count = 0
                             end
-                        elseif job_mult < 1.0 then
+                        elseif mult < 1.0 then
                             -- speedup mode (*S): advance timer by extra ticks
-                            local speed = 1.0 / job_mult
+                            local speed = 1.0 / mult
                             local extra_skip = math.max(1, math.floor(speed - 1.0 + 0.5))
                             job.completion_timer = math.max(0, job.completion_timer - extra_skip)
                             jdata.last_val = job.completion_timer
@@ -234,15 +212,15 @@ local function on_tick()
         if not seen_jobs[jid] then
             local ticks = jdata.ticks_worked or 0
             local last_v = jdata.last_val or 99
-            if ticks >= 2 and last_v <= 2 and jdata.unit_id and jdata.skill_id then
+            -- award bonus experience if worked on the tile (at least 3 ticks worked or reached low timer)
+            if ticks >= 3 and (last_v <= 10 or ticks >= 10) and jdata.unit_id and jdata.skill_id then
                 local unit = df.unit.find(jdata.unit_id)
                 if unit and not dfhack.units.isDead(unit) then
                     -- base vanilla experience per tile is 10 xp
                     -- proportional time-scaling adjustment: (mult - 1.0) * 10
-                    -- e.g. /5 (rock): 5x slower -> +40 bonus xp = 50 xp/tile (same xp/min as vanilla)
-                    -- e.g. /10 (soil): 10x slower -> +90 bonus xp = 100 xp/tile (same xp/min as vanilla)
-                    local mult = jdata.multiplier or 1.0
-                    local xp_adjustment = math.floor((mult - 1.0) * 10 + 0.5)
+                    -- e.g. /5: 5x slower -> +40 bonus xp = 50 xp/tile (same xp/min as vanilla)
+                    local j_mult = jdata.multiplier or 1.0
+                    local xp_adjustment = math.floor((j_mult - 1.0) * 10 + 0.5)
                     if xp_adjustment ~= 0 then
                         add_skill_exp(unit, jdata.skill_id, xp_adjustment)
                     end
@@ -294,8 +272,7 @@ end
 
 local function print_status()
     local enabled_str = isEnabled() and 'enabled' or 'disabled'
-    local rock_dur = tonumber(config.data.rock_multiplier) or 5.0
-    local fast_dur = tonumber(config.data.fast_multiplier) or 10.0
+    local mult = tonumber(config.data.multiplier) or 5.0
     local smooth_str = config.data.include_smoothing and 'included' or 'excluded'
 
     local active_count = 0
@@ -305,12 +282,10 @@ local function print_status()
         end
     end
 
-    local rock_xp = math.floor(rock_dur * 10 + 0.5)
-    local fast_xp = math.floor(fast_dur * 10 + 0.5)
+    local xp_per_tile = math.floor(mult * 10 + 0.5)
 
     print(('slow digging is currently %s.'):format(enabled_str))
-    print(('  %-24s %s'):format('rock/stone speed:', format_mult(rock_dur, config.data.rock_setting) .. (' (%d xp/tile)'):format(rock_xp)))
-    print(('  %-24s %s'):format('fast materials (soil):', format_mult(fast_dur, config.data.fast_setting) .. (' (%d xp/tile)'):format(fast_xp)))
+    print(('  %-24s %s'):format('digging speed:', format_mult(mult, config.data.setting) .. (' (%d xp/tile)'):format(xp_per_tile)))
     print(('  %-24s %s'):format('wall/floor smooth:', smooth_str))
     print(('  %-24s %s'):format('skill experience:', 'time-proportional (constant xp/minute, matched to vanilla)'))
     print(('  %-24s %d'):format('active scaled jobs:', active_count))
@@ -346,12 +321,11 @@ end
 SlowDiggingWindow = defclass(SlowDiggingWindow, widgets.Window)
 SlowDiggingWindow.ATTRS{
     frame_title = 'slow digging configuration',
-    frame = {w = 62, h = 18},
+    frame = {w = 62, h = 16},
 }
 
 function SlowDiggingWindow:init()
-    local rock_dur = tonumber(config.data.rock_multiplier) or 5.0
-    local fast_dur = tonumber(config.data.fast_multiplier) or 10.0
+    local mult = tonumber(config.data.multiplier) or 5.0
 
     self:addviews{
         widgets.ToggleHotkeyLabel{
@@ -369,35 +343,22 @@ function SlowDiggingWindow:init()
             end,
         },
         widgets.CycleHotkeyLabel{
-            view_id = 'cycle_rock',
+            view_id = 'cycle_speed',
             frame = {t = 3, l = 1},
-            key = 'CUSTOM_R',
-            label = 'rock / stone speed:   ',
+            key = 'CUSTOM_S',
+            label = 'digging speed:        ',
             options = SPEED_OPTIONS,
-            initial_option = find_speed_index(rock_dur),
+            initial_option = find_speed_index(mult),
             on_change = function(val, opt)
-                config.data.rock_multiplier = opt.value
-                config.data.rock_setting = opt.setting
-                config:write()
-            end,
-        },
-        widgets.CycleHotkeyLabel{
-            view_id = 'cycle_fast',
-            frame = {t = 5, l = 1},
-            key = 'CUSTOM_F',
-            label = 'fast materials (soil):',
-            options = SPEED_OPTIONS,
-            initial_option = find_speed_index(fast_dur),
-            on_change = function(val, opt)
-                config.data.fast_multiplier = opt.value
-                config.data.fast_setting = opt.setting
+                config.data.multiplier = opt.value
+                config.data.setting = opt.setting
                 config:write()
             end,
         },
         widgets.ToggleHotkeyLabel{
             view_id = 'toggle_smoothing',
-            frame = {t = 7, l = 1},
-            key = 'CUSTOM_S',
+            frame = {t = 5, l = 1},
+            key = 'CUSTOM_M',
             label = 'smooth walls / floors:',
             options = {
                 {label = 'included', value = true, pen = COLOR_LIGHTGREEN},
@@ -410,7 +371,7 @@ function SlowDiggingWindow:init()
             end,
         },
         widgets.Label{
-            frame = {t = 10, l = 1},
+            frame = {t = 8, l = 1},
             text = {
                 {text = 'skill experience:     ', pen = COLOR_DARKGREY},
                 {text = 'time-proportional (constant xp/minute)', pen = COLOR_LIGHTCYAN},
@@ -441,22 +402,20 @@ local function print_help()
     print([==[
 usage: slow_digging [<options>] [<command>]
 
-controls excavation duration and mining speed for rock/stone and fast
-materials (soil/sand/clay) with time-proportional skill experience normalization
-(xp earned per minute of real time remains 100% identical to vanilla).
+controls excavation duration and mining speed across all materials
+with time-proportional skill experience normalization (xp earned per minute
+of real time remains 100% identical to vanilla).
 
 settings:
-    slow_digging /5               set rock/stone speed to 5x slower (50 xp/tile).
-    slow_digging rock /5          set rock/stone speed to 5x slower (50 xp/tile).
-    slow_digging soil /10         set fast materials to 10x slower (100 xp/tile).
-    slow_digging fast /10         alias for soil.
-    slow_digging /5 /10           set rock to /5 and soil to /10 in one command.
+    slow_digging /5               set universal digging speed to 5x slower (50 xp/tile).
+    slow_digging /10              set universal digging speed to 10x slower (100 xp/tile).
+    slow_digging /2               set universal digging speed to 2x slower (20 xp/tile).
 
 commands:
     help                          display this help text.
-    status                        show current status and speed factors.
+    status                        show current status and speed factor.
     gui                           open interactive configuration window.
-    enable|on                     enable slowdown multipliers.
+    enable|on                     enable slowdown multiplier.
     disable|off                   disable slowdown (restore 1.0x vanilla speed).
     include-smoothing on|off      toggle wall/floor smoothing multiplier.
 
@@ -490,51 +449,19 @@ local function main(...)
     elseif cmd == 'disable' or cmd == 'off' or cmd == '0' then
         stop()
         print('slow digging disabled.')
-    elseif cmd == 'rock' or cmd == 'stone' then
-        local dur, setting_str = parse_setting(args[2])
+    elseif cmd == 'set' or cmd == 'speed' or cmd == 'rock' or cmd == 'stone' or cmd == 'soil' or cmd == 'fast' then
+        local param = args[2] or args[1]
+        if cmd == 'set' and args[2] and (args[2]:lower() == 'speed' or args[2]:lower() == 'rock' or args[2]:lower() == 'soil') then
+            param = args[3]
+        end
+        local dur, setting_str = parse_setting(param)
         if not dur then
-            qerror(('invalid rock speed setting: %s. use /5 (slower) or *2 (faster).'):format(setting_str))
+            qerror(('invalid speed setting: %s. use /5 (slower) or *2 (faster).'):format(setting_str or param))
         end
-        config.data.rock_multiplier = dur
-        config.data.rock_setting = setting_str
+        config.data.multiplier = dur
+        config.data.setting = setting_str
         config:write()
-        print(('rock/stone digging speed set to %s.'):format(setting_str))
-        if not isEnabled() then start() end
-    elseif cmd == 'soil' or cmd == 'fast' or cmd == 'sand' or cmd == 'clay' then
-        local dur, setting_str = parse_setting(args[2])
-        if not dur then
-            qerror(('invalid fast materials speed setting: %s. use /10 (slower) or *2 (faster).'):format(setting_str))
-        end
-        config.data.fast_multiplier = dur
-        config.data.fast_setting = setting_str
-        config:write()
-        print(('fast materials (soil/sand/clay) digging speed set to %s.'):format(setting_str))
-        if not isEnabled() then start() end
-    elseif cmd == 'set' then
-        local target = tostring(args[2] or ''):lower()
-        if target == 'rock' or target == 'stone' then
-            local dur, setting_str = parse_setting(args[3])
-            if not dur then qerror(('invalid rock setting: %s'):format(setting_str)) end
-            config.data.rock_multiplier = dur
-            config.data.rock_setting = setting_str
-            config:write()
-            print(('rock/stone digging speed set to %s.'):format(setting_str))
-        elseif target == 'soil' or target == 'fast' or target == 'sand' or target == 'clay' then
-            local dur, setting_str = parse_setting(args[3])
-            if not dur then qerror(('invalid soil setting: %s'):format(setting_str)) end
-            config.data.fast_multiplier = dur
-            config.data.fast_setting = setting_str
-            config:write()
-            print(('fast materials digging speed set to %s.'):format(setting_str))
-        else
-            -- set both or default to rock
-            local dur, setting_str = parse_setting(args[2])
-            if not dur then qerror(('invalid setting: %s'):format(setting_str)) end
-            config.data.rock_multiplier = dur
-            config.data.rock_setting = setting_str
-            config:write()
-            print(('rock/stone digging speed set to %s.'):format(setting_str))
-        end
+        print(('digging speed set to %s.'):format(setting_str))
         if not isEnabled() then start() end
     elseif cmd == 'include-smoothing' then
         local sub = tostring(args[2] or ''):lower()
@@ -548,20 +475,12 @@ local function main(...)
         config:write()
         print(('wall/floor smoothing is now %s.'):format(config.data.include_smoothing and 'included' or 'excluded'))
     else
-        -- check for two parameters: e.g. "slow-digging /5 /10"
-        local rock_dur, rock_str = parse_setting(args[1])
-        if rock_dur then
-            config.data.rock_multiplier = rock_dur
-            config.data.rock_setting = rock_str
-            if args[2] then
-                local fast_dur, fast_str = parse_setting(args[2])
-                if fast_dur then
-                    config.data.fast_multiplier = fast_dur
-                    config.data.fast_setting = fast_str
-                end
-            end
+        local dur, setting_str = parse_setting(args[1])
+        if dur then
+            config.data.multiplier = dur
+            config.data.setting = setting_str
             config:write()
-            print(('slow digging speed updated: rock=%s, soil=%s'):format(config.data.rock_setting, config.data.fast_setting))
+            print(('digging speed set to %s.'):format(setting_str))
             if not isEnabled() then start() end
         else
             qerror(('unknown command or setting: "%s". use "slow_digging help" for usage.'):format(args[1]))
