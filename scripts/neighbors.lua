@@ -420,43 +420,47 @@ local function check_entities_at_war(ent1, ent2)
     local e2 = get_effective_civ(ent2) or ent2
     if e1.id == e2.id then return false end
 
-    -- 1. Inherent hostility tags (e.g. civilized vs skulking/babysnatcher/evil)
+    -- 1. Active historical diplomacy states (TotalWar or Skirmishing)
+    local function get_diplomacy_relation(source_ent, target_id)
+        if not source_ent or not source_ent.relations or not source_ent.relations.diplomacy then
+            return nil
+        end
+        local states = source_ent.relations.diplomacy.state
+        if not states then return nil end
+        for _, dip in ipairs(states) do
+            if dip.group_id == target_id then
+                return dip.relation
+            end
+        end
+        return nil
+    end
+
+    local r1 = get_diplomacy_relation(e1, e2.id) or get_diplomacy_relation(e1, ent2.id)
+    local r2 = get_diplomacy_relation(e2, e1.id) or get_diplomacy_relation(e2, ent1.id)
+    local rel = r1 or r2
+    if rel ~= nil then
+        if rel == df.diplomacy_state_type.TotalWar or rel == df.diplomacy_state_type.Skirmishing then
+            return true
+        elseif rel == df.diplomacy_state_type.Peace or rel == df.diplomacy_state_type.TradeAgreement then
+            return false
+        end
+    end
+
+    -- 2. Inherent hostility tags (e.g. civilized vs evil/babysnatcher) fallback if no treaties exist
     local function is_hostile_tag(e)
         if not e or not e.entity_raw then return false end
         local code = tostring(e.entity_raw.code or ""):upper()
         local flags = e.entity_raw.flags
-        if code:find("GOBLIN") or code:find("EVIL") or code:find("KOBOLD") then
+        if code:find("GOBLIN") or code:find("EVIL") or code:find("ORC") then
             return true
         end
-        if flags and (flags.BABYSNATCHER or flags.ITEM_THIEF or flags.SKULKING) then
+        if flags and flags.BABYSNATCHER then
             return true
         end
         return false
     end
 
     if is_hostile_tag(e1) ~= is_hostile_tag(e2) then
-        return true
-    end
-
-    -- 2. Active historical diplomacy states (TotalWar or Skirmishing)
-    local function has_diplomacy_war(source_ent, target_id)
-        if not source_ent or not source_ent.relations or not source_ent.relations.diplomacy then
-            return false
-        end
-        local states = source_ent.relations.diplomacy.state
-        if not states then return false end
-        for _, dip in ipairs(states) do
-            if dip.group_id == target_id then
-                if dip.relation == df.diplomacy_state_type.TotalWar or dip.relation == df.diplomacy_state_type.Skirmishing then
-                    return true
-                end
-            end
-        end
-        return false
-    end
-
-    if has_diplomacy_war(e1, e2.id) or has_diplomacy_war(e1, ent2.id)
-        or has_diplomacy_war(e2, e1.id) or has_diplomacy_war(e2, ent1.id) then
         return true
     end
 
@@ -473,27 +477,7 @@ local function get_diplomatic_status(ent, player_civ, def_state)
         return "peaceful", COLOR_LIGHTBLUE
     end
 
-    -- 2. inherent evil / goblin / skulking tags: bidirectional hostility
-    local function entity_is_hostile_kind(e)
-        if not e or not e.entity_raw then return false end
-        local code = tostring(e.entity_raw.code or ""):upper()
-        if code:find("GOBLIN") or code:find("EVIL") or code:find("KOBOLD") or code:find("ORC") then
-            return true
-        end
-        local flags = e.entity_raw.flags
-        if flags and (flags.BABYSNATCHER or flags.ITEM_THIEF or flags.SKULKING) then
-            return true
-        end
-        return false
-    end
-
-    local e_evil = entity_is_hostile_kind(ent) or entity_is_hostile_kind(eff_ent)
-    local p_evil = entity_is_hostile_kind(player_civ)
-    if e_evil ~= p_evil then
-        return "hostile", COLOR_LIGHTRED
-    end
-
-    -- 3. explicit historical diplomatic relations (war vs peace)
+    -- 2. explicit historical diplomatic relations (war vs peace) override generic tags
     local function get_dip_state(source_ent, target_id)
         if not source_ent or not source_ent.relations or not source_ent.relations.diplomacy then return nil end
         local states = source_ent.relations.diplomacy.state
@@ -520,16 +504,36 @@ local function get_diplomatic_status(ent, player_civ, def_state)
         end
     end
 
-    -- 4. native DF candidate state (WAR / HOSTILE / NORMAL / NO_COMM / NO_TRADE)
+    -- 3. native DF candidate state (WAR / HOSTILE / NORMAL / NO_COMM / NO_TRADE)
     if def_state ~= nil then
         local sname = tostring(df.embark_neighbor_state_type[def_state] or def_state):upper()
-        if sname:find("HOSTILE") or sname:find("WAR") or def_state == 0 or def_state == 1 then
+        if sname:find("WAR") or def_state == 0 then
             return "hostile", COLOR_LIGHTRED
         elseif sname:find("PEACEFUL") or sname:find("NORMAL") or def_state == 4 then
             return "peaceful", COLOR_LIGHTBLUE
         end
-        -- NO_COMM (2) or NO_TRADE (3) reflect wagon/overland access, not diplomatic hostility.
-        -- Fall through to check entity civilized status instead of blinding returning neutral.
+        -- Note: HOSTILE (1) in native DF embark state is triggered merely by [ITEM_THIEF] on either party.
+        -- We fall through to check actual treaties and civilized status to avoid false-positive hostility.
+    end
+
+    -- 4. inherent evil / goblin / babysnatcher tags: bidirectional hostility fallback
+    local function entity_is_hostile_kind(e)
+        if not e or not e.entity_raw then return false end
+        local code = tostring(e.entity_raw.code or ""):upper()
+        if code:find("GOBLIN") or code:find("EVIL") or code:find("ORC") then
+            return true
+        end
+        local flags = e.entity_raw.flags
+        if flags and flags.BABYSNATCHER then
+            return true
+        end
+        return false
+    end
+
+    local e_evil = entity_is_hostile_kind(ent) or entity_is_hostile_kind(eff_ent)
+    local p_evil = entity_is_hostile_kind(player_civ)
+    if e_evil ~= p_evil then
+        return "hostile", COLOR_LIGHTRED
     end
 
     -- 5. civilized vs independent/nomad
@@ -539,6 +543,60 @@ local function get_diplomatic_status(ent, player_civ, def_state)
     end
 
     return "neutral", COLOR_WHITE
+end
+
+-- authoritative siege capability evaluator determining whether neighbor will siege player, site, or both
+local function get_siege_status(ent, player_civ, site_owner_entity, is_tower)
+    if not ent or not ent.entity_raw then return "-" end
+    local eff_civ = get_effective_civ(ent) or ent
+
+    -- player's own civilization never sieges player
+    if player_civ and (ent.id == player_civ.id or eff_civ.id == player_civ.id) then
+        return "-"
+    end
+
+    local raw = ent.entity_raw
+    local is_sieger = (raw.flags and raw.flags.SIEGER) or is_tower
+    if not is_sieger then
+        return "-"
+    end
+
+    local war_with_player = false
+    if is_tower then
+        war_with_player = true
+    elseif player_civ then
+        war_with_player = check_entities_at_war(player_civ, eff_civ)
+    end
+
+    local war_with_site = false
+    if is_tower then
+        war_with_site = true
+    elseif site_owner_entity and site_owner_entity.id ~= eff_civ.id then
+        war_with_site = check_entities_at_war(site_owner_entity, eff_civ)
+    end
+
+    if not war_with_player and not war_with_site then
+        return "-"
+    end
+
+    local pop_siege = raw.progress_trigger and raw.progress_trigger.pop_siege or 0
+    local is_hermit_pop_limited = (pop_siege > 0)
+
+    if war_with_player and war_with_site then
+        if is_hermit_pop_limited then
+            return "both (pop 20+)"
+        end
+        return "will siege both"
+    elseif war_with_player then
+        if is_hermit_pop_limited then
+            return "you (pop 20+)"
+        end
+        return "will siege you"
+    elseif war_with_site then
+        return "will siege site"
+    end
+
+    return "-"
 end
 
 -- extracts high-signal urban architecture, fortifications, and subterranean summary
@@ -1090,9 +1148,9 @@ function scan_neighbors(override_x, override_y)
                         war_with_site = true
                     end
 
+                    local siege_str = get_siege_status(eff_civ, player_civ, site_owner_entity, is_tower)
                     local history_pop = format_population(raw_pop)
                     local est_pop = estimate_spawn_population(stype, raw_pop, history_pop, site)
-                    local war_str = war_with_site and "war vs site" or ""
 
                     table.insert(entries, {
                         civ = eff_civ,
@@ -1104,7 +1162,7 @@ function scan_neighbors(override_x, override_y)
                         travel_str = travel_str,
                         history_pop = history_pop,
                         est_pop = est_pop,
-                        war_str = war_str,
+                        siege_str = siege_str,
                         direction = dir,
                         status = status_str,
                         status_pen = status_pen,
@@ -1169,6 +1227,7 @@ function scan_neighbors(override_x, override_y)
                     found_entry.is_primary_site = true
                 end
             else
+                local siege_str = get_siege_status(eff_civ, player_civ, site_owner_entity, false)
                 table.insert(entries, {
                     civ = eff_civ,
                     rname = orace,
@@ -1179,7 +1238,7 @@ function scan_neighbors(override_x, override_y)
                     travel_str = t_str,
                     history_pop = hist_pop,
                     est_pop = cand_pop_fmt,
-                    war_str = "",
+                    siege_str = siege_str,
                     direction = is_primary and "here" or calculate_direction(world_x, world_y, site.pos.x, site.pos.y),
                     status = status_str,
                     status_pen = status_pen,
@@ -1245,6 +1304,8 @@ function scan_neighbors(override_x, override_y)
                     war_with_site = true
                 end
 
+                local siege_str = get_siege_status(eff_civ, player_civ, site_owner_entity, is_tower)
+
                 table.insert(entries, {
                     civ = eff_civ,
                     rname = orace,
@@ -1255,7 +1316,7 @@ function scan_neighbors(override_x, override_y)
                     travel_str = t_str,
                     history_pop = hist_pop,
                     est_pop = cand_pop_fmt,
-                    war_str = war_with_site and "war vs site" or "",
+                    siege_str = siege_str,
                     direction = dir,
                     status = status_str,
                     status_pen = status_pen,
@@ -1305,6 +1366,7 @@ function scan_neighbors(override_x, override_y)
         world_y = world_y,
         player_race = player_race,
         player_civ_name = player_civ_name,
+        site_owner_entity = site_owner_entity,
         site_info_str = site_info_str,
         pop_info_str = pop_info_str,
         urban_info_str = urban_info_str,
@@ -1314,7 +1376,7 @@ end
 -- Draggable GUI window component
 EmbarkNeighbors = defclass(EmbarkNeighbors, widgets.Window)
 EmbarkNeighbors.ATTRS {
-    frame={w=132, h=27, l=2, t=2},
+    frame={w=136, h=27, l=2, t=2},
     draggable=true,
     drag_anchors={title=true, frame=true, body=false},
 }
@@ -1330,8 +1392,8 @@ function EmbarkNeighbors:init()
 
     local choices = {}
     for _, n in ipairs(data.entries) do
-        local line = string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
-            n.travel_str, n.rname, n.history_pop, n.est_pop, n.war_str, n.stype, n.sname)
+        local line = string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
+            n.travel_str, n.rname, n.history_pop, n.est_pop, n.siege_str or '-', n.stype, n.sname)
         table.insert(choices, {
             text={
                 {text=line, pen=n.status_pen}
@@ -1422,8 +1484,8 @@ function EmbarkNeighbors:init()
     table.insert(subviews, widgets.Label{
         frame={t=header_y, l=0},
         text={
-            {text=string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
-                'travel', 'civ race', 'hist. pop', 'est. pop', 'conflict', 'site type', 'site name'), pen=COLOR_YELLOW},
+            {text=string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
+                'travel', 'civ race', 'hist. pop', 'est. pop', 'will siege', 'site type', 'site name'), pen=COLOR_YELLOW},
         }
     })
 
@@ -1487,13 +1549,13 @@ function print_cli()
     print(string.format('  site:   %s', data.site_info_str))
     print(string.rep('-', 120))
 
-    print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
-        'travel', 'civ race', 'hist. pop', 'est. pop', 'conflict', 'site type', 'site name'))
+    print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
+        'travel', 'civ race', 'hist. pop', 'est. pop', 'will siege', 'site type', 'site name'))
     print(string.rep('-', 120))
 
     for _, n in ipairs(data.entries) do
-        print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-14.14s | %-14.14s | %s',
-            n.travel_str, n.rname, n.history_pop or '', n.est_pop or '', n.war_str or '', n.stype, n.sname))
+        print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
+            n.travel_str, n.rname, n.history_pop or '', n.est_pop or '', n.siege_str or '-', n.stype, n.sname))
     end
 
     print(string.rep('-', 120) .. '\n')

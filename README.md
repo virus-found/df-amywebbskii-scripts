@@ -31,7 +31,7 @@ Published as a unified Steam Workshop mod and standalone DFHack script repositor
 ### 6. **Early Sieges** (`objects/entity_early_sieges.txt`)
 - Civilizations raw patch tuning hostile expansion, lower population/wealth thresholds, and early siege readiness:
   - **Tier 0 (Ambush 0, Siege 0)**: Sinister & apex predatory races (goblins, kobolds, orcs, dark dwarves, drow, dark cultists, succubi, warlocks, trolls, ogres, gnolls, ratfolk, carnivore predators).
-  - **Tier 1 (Ambush 1, Siege 1)**: Standard militaristic & expansionist civilized races (dwarves, humans, elves, duergar, halflings, illithids, lizardmen, avians, valkyries, lupines, dragon men, molemarians, troglodytes).
+  - **Tier 1 (Ambush 0, Siege 0)**: Standard militaristic & expansionist civilized races (dwarves, humans, elves, duergar, halflings, illithids, lizardmen, avians, valkyries, lupines, dragon men, molemarians, troglodytes) configured with zero population/wealth triggers for solo hermit compatibility.
   - **Exceptions (Native Triggers Retained)**: Benign, gentle herbivore, or peaceful races (small mammal/hamster-people, invertebrate/butterfly-people, cat-people/Mau, ungulate/deer-people, snail-people, forest golems, nillians, etc.) are omitted to leave their vanilla/mod-defined `pop_siege` untouched.
 
 ### 7. **Leather Scaling (Brom's Leather Overhaul)** (`tools/patch_vanilla_leather.py` & in-game patch switch)

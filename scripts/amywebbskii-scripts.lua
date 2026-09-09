@@ -206,15 +206,17 @@ end
 local function get_raw_patches_dir()
     local candidates = {}
     local base = get_base_dir()
-    table.insert(candidates, base .. 'data/installed_mods/amywebbskii_scripts (2)/raw_patches')
-    table.insert(candidates, base .. 'data/installed_mods/amywebbskii_scripts (1)/raw_patches')
+    for v = 20, 1, -1 do
+        table.insert(candidates, base .. 'data/installed_mods/amywebbskii_scripts (' .. v .. ')/raw_patches')
+    end
     table.insert(candidates, base .. 'mods/amywebbskii_scripts/raw_patches')
     local df_p = dfhack.getDFPath()
     if df_p and df_p ~= '' then
         table.insert(candidates, df_p .. '/dfhack-config/scripts/raw_patches')
         table.insert(candidates, df_p .. '/mods/amywebbskii_scripts/raw_patches')
-        table.insert(candidates, df_p .. '/data/installed_mods/amywebbskii_scripts (2)/raw_patches')
-        table.insert(candidates, df_p .. '/data/installed_mods/amywebbskii_scripts (1)/raw_patches')
+        for v = 20, 1, -1 do
+            table.insert(candidates, df_p .. '/data/installed_mods/amywebbskii_scripts (' .. v .. ')/raw_patches')
+        end
     end
     local home = os.getenv('HOME')
     if home then
@@ -542,11 +544,11 @@ end
 local function get_amy_bundle_objects_dirs()
     local dirs = {}
     local seen = {}
-    local subpaths = {
-        'amywebbskii_scripts (2)/objects',
-        'amywebbskii_scripts (1)/objects',
-        'amywebbskii_scripts/objects',
-    }
+    local subpaths = {}
+    for v = 20, 1, -1 do
+        table.insert(subpaths, 'amywebbskii_scripts (' .. v .. ')/objects')
+    end
+    table.insert(subpaths, 'amywebbskii_scripts/objects')
     for _, root in ipairs(get_search_roots()) do
         for _, sub in ipairs(subpaths) do
             local p = root .. '/' .. sub
@@ -890,7 +892,7 @@ local TOOLS = {
         new_world = 'required',
         depends_on = 'amywebbskii scripts suite mod',
         check_installed = is_amy_bundle_installed,
-        desc = 'packaged directly inside the amywebbskii scripts suite mod (objects/entity_early_sieges.txt).\n\nwhen enabled, dynamically adjusts population and wealth thresholds for ambushes and military sieges based on civilization aggression (tier 0 at 0 pop, tier 1 at 20 pop).\n\ntoggled via launcher tick. takes effect during world generation when amywebbskii scripts suite is active in the mod list.',
+        desc = 'packaged directly inside the amywebbskii scripts suite mod (objects/entity_early_sieges.txt).\n\nwhen enabled, dynamically adjusts population and wealth thresholds for ambushes and military sieges based on civilization aggression (tier 0 and tier 1 at 0 pop for solo hermit readiness).\n\ntoggled via launcher tick. takes effect during world generation when amywebbskii scripts suite is active in the mod list.',
         get_status = function()
             return is_bundle_module_active('entity_early_sieges.txt')
         end,
