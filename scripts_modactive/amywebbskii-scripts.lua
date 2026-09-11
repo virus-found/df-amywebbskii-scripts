@@ -1128,17 +1128,9 @@ local function load_config()
     end
     for _, t in ipairs(TOOLS) do
         if cfg.data[t.key] == nil then
-            -- only 100% cross-platform memory-only dfhack scripts default to enabled
-            -- all raw patches, mod patches, and disk-modifying tools default to disabled (false)
-            if t.category == 'dfhack script' then
-                if t.check_installed and not t.check_installed() then
-                    cfg.data[t.key] = false
-                else
-                    cfg.data[t.key] = true
-                end
-            else
-                cfg.data[t.key] = false
-            end
+            -- all optional scripts, raw patches, and tools default to disabled (false)
+            -- user explicitly enables what they want via the switchboard
+            cfg.data[t.key] = false
         end
     end
     return cfg

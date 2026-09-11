@@ -16,7 +16,7 @@ local function is_launcher_enabled()
             return cfg.data['claim-foreign-items'] == true
         end
     end
-    return true
+    return false
 end
 
 local function show_result_dialog(title, text, color)

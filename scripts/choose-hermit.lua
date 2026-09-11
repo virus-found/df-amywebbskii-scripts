@@ -40,8 +40,20 @@ usage
 local gui = require('gui')
 local widgets = require('gui.widgets')
 local dialogs = require('gui.dialogs')
+local json = require('json')
 
 local GLOBAL_KEY = 'choose_your_hermit'
+local LAUNCHER_CONFIG_PATH = 'dfhack-config/amywebbskii-scripts.json'
+
+local function is_launcher_enabled()
+    local ok, cfg = pcall(json.open, LAUNCHER_CONFIG_PATH)
+    if ok and cfg and cfg.data and type(cfg.data) == 'table' then
+        if cfg.data['choose-hermit'] ~= nil then
+            return cfg.data['choose-hermit'] == true
+        end
+    end
+    return false
+end
 
 -- safely runs a dfhack command if the script/plugin exists, otherwise quietly ignores it
 local function safe_run_command(cmd, ...)
@@ -1207,8 +1219,9 @@ end
 -- automatic trigger hook on map load if brand new embark with > 1 expedition citizens
 dfhack.onStateChange[GLOBAL_KEY] = function(sc)
     if sc == SC_MAP_LOADED and df.global.gamemode == df.game_mode.DWARF then
+        if not is_launcher_enabled() then return end
         dfhack.timeout(10, 'ticks', function()
-            if dfhack.isMapLoaded() then
+            if dfhack.isMapLoaded() and is_launcher_enabled() then
                 local citizens = get_embark_citizens()
                 if citizens and #citizens > 1 and df.global.cur_year_tick <= 20000 then
                     show_gui()

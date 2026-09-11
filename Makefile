@@ -5,8 +5,8 @@ B12_DIR ?= /home/gargantua/.local/share/Bay 12 Games/Dwarf Fortress
 SCRIPTS_DIR = $(DFHACK_DIR)/dfhack-config/scripts
 DOCS_SCRIPTS_DIR = /home/gargantua/docs/games/df/dfhack-config/scripts
 LOCAL_MODS_DIR = $(B12_DIR)/mods/amywebbskii_scripts
-INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (4)
-INSTALLED_MODS_DIR_V1 = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (4)
+INSTALLED_MODS_DIR = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (5)
+INSTALLED_MODS_DIR_V1 = $(B12_DIR)/data/installed_mods/amywebbskii_scripts (5)
 
 UPLOAD_MODS_DIR = $(B12_DIR)/mods/mod_upload/amywebbskii_scripts
 

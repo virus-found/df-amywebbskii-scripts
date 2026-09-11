@@ -25,7 +25,7 @@ local DIGGING_JOB_TYPES = {
 
 local function get_default_config()
     return {
-        enabled = true,
+        enabled = false,
         setting = '/5',
         multiplier = 5.0,
         include_smoothing = false,
