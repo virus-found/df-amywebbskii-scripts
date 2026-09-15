@@ -31,6 +31,7 @@ Usage
 
 local gui = require('gui')
 local widgets = require('gui.widgets')
+local overlay = require('plugins.overlay')
 
 local function safe_get(fn)
     local ok, res = pcall(fn)
@@ -125,20 +126,45 @@ local function get_effective_civ(ent)
     return ent
 end
 
--- formats entity race cleanly, detecting towers and necromancer factions
-local function format_entity_race(ent)
+-- formats entity race cleanly, detecting towers, necromancer factions, and chaos cults
+local function format_entity_race(ent, site)
     if not ent then return "unknown" end
     if is_tower_faction(ent) then
         return "tower"
     end
-    if ent.race >= 0 and df.creature_raw.find(ent.race) then
-        return df.creature_raw.find(ent.race).name[1]:lower()
-    elseif ent.entity_raw then
+    if ent.entity_raw then
         local code = ent.entity_raw.code:lower()
         if code:find("tower") or code:find("necro") then
             return "tower"
         end
-        return code
+        if code:find("^mythical") then
+            if site and site.populace then
+                if site.populace.nemesis and #site.populace.nemesis > 0 then
+                    local nem = df.nemesis_record.find(site.populace.nemesis[0])
+                    local hf = nem and nem.figure
+                    if hf and hf.info and hf.info.curse and hf.info.curse.name ~= "" then
+                        return hf.info.curse.name:lower()
+                    end
+                end
+                if site.populace.inhabitants and #site.populace.inhabitants > 0 then
+                    local inh = site.populace.inhabitants[0]
+                    local cr = df.creature_raw.find(inh.pop_spec.race)
+                    if cr then
+                        return cr.name[1]:lower()
+                    end
+                end
+            end
+            return "chaos cult"
+        end
+    end
+    if ent.race >= 0 and df.creature_raw.find(ent.race) then
+        -- safeguard against procedural dummy race (e.g. WORM_MAN on mythical sites)
+        if ent.race == 1 and ent.type == df.historical_entity_type.SiteGovernment and site and (site.type == df.world_site_type.Monument or site.type == df.world_site_type.Lair) then
+            return "chaos cult"
+        end
+        return df.creature_raw.find(ent.race).name[1]:lower()
+    elseif ent.entity_raw then
+        return ent.entity_raw.code:lower()
     end
     return "unknown"
 end
@@ -262,10 +288,10 @@ local function format_est_pop(val)
     if val <= 0 then
         return "0"
     elseif val <= 10 then
-        return "~10"
+        return "10"
     else
         local rounded = math.floor((val + 5) / 10) * 10
-        return string.format("~%d", rounded)
+        return string.format("%d", rounded)
     end
 end
 
@@ -464,8 +490,12 @@ local function get_diplomatic_status(ent, player_civ, def_state)
         return "peaceful", COLOR_LIGHTBLUE
     end
 
-    -- 2. necromancer towers are universally hostile
+    -- 2. necromancer towers and mythical chaos beasts are universally hostile
     if is_tower_faction(ent) or is_tower_faction(eff_ent) then
+        return "hostile", COLOR_LIGHTRED
+    end
+    if (ent.entity_raw and ent.entity_raw.code:lower():find("^mythical")) or
+       (eff_ent and eff_ent.entity_raw and eff_ent.entity_raw.code:lower():find("^mythical")) then
         return "hostile", COLOR_LIGHTRED
     end
 
@@ -521,73 +551,80 @@ end
 
 -- authoritative siege capability evaluator determining whether neighbor will siege player, site, or both
 local function get_siege_status(ent, player_civ, site_owner_entity, is_tower, cand_state, raw_pop, est_pop)
-    if not ent or not ent.entity_raw then return "-" end
+    if not ent or not ent.entity_raw then return "" end
     local eff_civ = get_effective_civ(ent) or ent
 
     -- player's own civilization never sieges player
     if player_civ and (ent.id == player_civ.id or eff_civ.id == player_civ.id) then
-        return "-"
+        return ""
+    end
+
+    -- only civilizations whose authoritative diplomatic stance is hostile will attack
+    local player_status, _ = get_diplomatic_status(eff_civ, player_civ, cand_state)
+    local war_with_player = (player_status == "hostile")
+    if is_tower then
+        war_with_player = true
+    end
+
+    local war_with_site = false
+    if site_owner_entity and site_owner_entity.id ~= eff_civ.id then
+        if is_tower then
+            war_with_site = true
+        else
+            local site_status, _ = get_diplomatic_status(eff_civ, site_owner_entity, nil)
+            war_with_site = (site_status == "hostile")
+        end
+    end
+
+    if not war_with_player and not war_with_site then
+        return ""
     end
 
     local raw = ent.entity_raw
     local is_sieger = (raw.flags and raw.flags.SIEGER) or is_tower
     local is_ambusher = (raw.flags and raw.flags.AMBUSHER)
 
-    local war_with_player = false
-    if is_tower then
-        war_with_player = true
-    elseif cand_state ~= nil then
-        war_with_player = (cand_state == df.embark_neighbor_state_type.WAR or cand_state == 0)
-    elseif player_civ then
-        war_with_player = check_entities_at_war(player_civ, eff_civ)
-    end
-
-    local war_with_site = false
-    if is_tower then
-        war_with_site = true
-    elseif site_owner_entity and site_owner_entity.id ~= eff_civ.id then
-        war_with_site = check_entities_at_war(site_owner_entity, eff_civ)
-    end
-
-    if not war_with_player and not war_with_site then
-        return "-"
-    end
-
-    -- entity is at war: verify whether they can siege vs ambush
-    if not is_sieger then
-        if is_ambusher then
-            return "ambush only"
-        end
-        return "-"
-    end
-
     -- verify living population: empty ruins or dead civilizations cannot mount invasions
     local hf_count = eff_civ.hist_figures and #eff_civ.hist_figures or 0
     if hf_count > 0 and hf_count < 5 and (not raw_pop or raw_pop == 0) then
-        return "no pop"
+        return ""
     end
-    if hf_count == 0 and (not raw_pop or raw_pop == 0) and (not est_pop or est_pop == '0' or est_pop == '~0') then
-        return "extinct"
+    if hf_count == 0 and (not raw_pop or raw_pop == 0) and (not est_pop or est_pop == '0') then
+        return ""
     end
 
-    local pop_siege = raw.progress_trigger and raw.progress_trigger.pop_siege or 0
-    local is_hermit_pop_limited = (pop_siege > 0)
+    -- entity is hostile: verify whether they can siege vs ambush
+    if not is_sieger then
+        if is_ambusher then
+            local pop_ambush_level = raw.progress_trigger and raw.progress_trigger.population or 0
+            local trigger_pop_map = { [1] = 20, [2] = 50, [3] = 80, [4] = 110, [5] = 140 }
+            local req_amb = trigger_pop_map[pop_ambush_level] or (pop_ambush_level > 5 and pop_ambush_level or nil)
+            if req_amb and req_amb > 0 then
+                return string.format("ambush if %d+ pop", req_amb)
+            end
+            return "ambush"
+        end
+        return ""
+    end
+
+    local pop_siege_level = raw.progress_trigger and raw.progress_trigger.pop_siege or 0
+    local trigger_pop_map = { [1] = 20, [2] = 50, [3] = 80, [4] = 110, [5] = 140 }
+    local req_pop = trigger_pop_map[pop_siege_level] or (pop_siege_level > 5 and pop_siege_level or nil)
+
+    local pop_suffix = ""
+    if req_pop and req_pop > 0 then
+        pop_suffix = string.format(" if %d+ pop", req_pop)
+    end
 
     if war_with_player and war_with_site then
-        if is_hermit_pop_limited then
-            return string.format("both (pop %d+)", pop_siege)
-        end
-        return "both"
+        return "site, you" .. pop_suffix
     elseif war_with_player then
-        if is_hermit_pop_limited then
-            return string.format("you (pop %d+)", pop_siege)
-        end
-        return "you"
+        return "you" .. pop_suffix
     elseif war_with_site then
-        return "site"
+        return "site" .. pop_suffix
     end
 
-    return "-"
+    return ""
 end
 
 -- extracts high-signal urban architecture, fortifications, and subterranean summary
@@ -873,14 +910,15 @@ function scan_neighbors(override_x, override_y)
             world_y = df.global.plotinfo.main.fortress_site.pos.y
         end
     else
-        local hover_x = safe_get(function() return scr.neighbor_hover_ax end)
-        local hover_y = safe_get(function() return scr.neighbor_hover_ay end)
+        local is_choosing = safe_get(function() return scr.choosing_embark end)
+        local emb_min_x = safe_get(function() return scr.location.embark_pos_min.x end)
+        local emb_min_y = safe_get(function() return scr.location.embark_pos_min.y end)
         local reg_x = safe_get(function() return scr.location.region_pos.x end)
         local reg_y = safe_get(function() return scr.location.region_pos.y end)
 
-        if hover_x and hover_y and hover_x >= 0 and hover_y >= 0 then
-            world_x = hover_x
-            world_y = hover_y
+        if is_choosing and emb_min_x and emb_min_x >= 0 and emb_min_y and emb_min_y >= 0 then
+            world_x = math.floor(emb_min_x / 16)
+            world_y = math.floor(emb_min_y / 16)
         elseif reg_x and reg_y and reg_x >= 0 and reg_y >= 0 then
             world_x = reg_x
             world_y = reg_y
@@ -922,17 +960,6 @@ function scan_neighbors(override_x, override_y)
         end
     end
 
-    local hover_mm_sx = safe_get(function() return scr.neighbor_hover_mm_sx end)
-    local hover_mm_sy = safe_get(function() return scr.neighbor_hover_mm_sy end)
-    local hover_mm_ex = safe_get(function() return scr.neighbor_hover_mm_ex end)
-    local hover_mm_ey = safe_get(function() return scr.neighbor_hover_mm_ey end)
-    local has_hover_box = false
-    local hx1, hy1, hx2, hy2 = 0, 0, 0, 0
-    if hover_mm_sx and hover_mm_sy and hover_mm_ex and hover_mm_ey and hover_mm_sx >= 0 and hover_mm_sy >= 0 and hover_mm_ex >= hover_mm_sx and hover_mm_ey >= hover_mm_sy then
-        has_hover_box = true
-        hx1, hy1, hx2, hy2 = hover_mm_sx, hover_mm_sy, hover_mm_ex, hover_mm_ey
-    end
-
     for _, site in ipairs(sites) do
         local overlap_area = 0
         if is_embark_on_cursor then
@@ -940,14 +967,6 @@ function scan_neighbors(override_x, override_y)
             local ox2 = math.min(emb_max_x, site.global_max_x)
             local oy1 = math.max(emb_min_y, site.global_min_y)
             local oy2 = math.min(emb_max_y, site.global_max_y)
-            if ox2 >= ox1 and oy2 >= oy1 then
-                overlap_area = (ox2 - ox1 + 1) * (oy2 - oy1 + 1)
-            end
-        elseif has_hover_box then
-            local ox1 = math.max(hx1, site.global_min_x)
-            local ox2 = math.min(hx2, site.global_max_x)
-            local oy1 = math.max(hy1, site.global_min_y)
-            local oy2 = math.min(hy2, site.global_max_y)
             if ox2 >= ox1 and oy2 >= oy1 then
                 overlap_area = (ox2 - ox1 + 1) * (oy2 - oy1 + 1)
             end
@@ -997,7 +1016,7 @@ function scan_neighbors(override_x, override_y)
         if primary_entity then
             site_owner_entity = primary_entity
             local cur_name = dfhack.translation.translateName(primary_entity.name, true)
-            local cur_race = format_entity_race(primary_entity)
+            local cur_race = format_entity_race(primary_entity, best_site)
 
             local status_tag, _ = get_diplomatic_status(primary_entity, player_civ, nil)
             local status_note = ""
@@ -1041,7 +1060,7 @@ function scan_neighbors(override_x, override_y)
 
         if is_world or is_fort then
             pop_fmt = format_est_pop(total_site_pop)
-            pop_info_str = string.format("%s (living population: ~%d)", format_population(total_site_pop), total_site_pop)
+            pop_info_str = string.format("%s (living population: %d)", format_population(total_site_pop), total_site_pop)
         else
             local site_w = (best_site.global_max_x and best_site.global_min_x) and (best_site.global_max_x - best_site.global_min_x + 1) or 1
             local site_h = (best_site.global_max_y and best_site.global_min_y) and (best_site.global_max_y - best_site.global_min_y + 1) or 1
@@ -1118,7 +1137,7 @@ function scan_neighbors(override_x, override_y)
                     if site then seen_site_ids[site.id] = true end
 
                     local cname = is_tower and "Tower" or dfhack.translation.translateName(eff_civ.name, true)
-                    local rname = is_tower and "tower" or format_entity_race(eff_civ)
+                    local rname = is_tower and "tower" or format_entity_race(eff_civ, site)
                     local sname = site and dfhack.translation.translateName(site.name, true) or (is_tower and "Tower" or "")
                     local stype = site and format_site_type(site) or (is_tower and "tower" or "")
 
@@ -1174,7 +1193,7 @@ function scan_neighbors(override_x, override_y)
             local sname = dfhack.translation.translateName(site.name, true)
             local is_tower = is_tower_site(site) or is_tower_faction(site_owner)
             local oname = is_tower and (site_owner and dfhack.translation.translateName(site_owner.name, true) or "Tower") or dfhack.translation.translateName(eff_civ.name, true)
-            local orace = is_tower and "tower" or format_entity_race(eff_civ)
+            local orace = is_tower and "tower" or format_entity_race(eff_civ, site)
             local status_str, status_pen = get_diplomatic_status(eff_civ, player_civ, nil)
             if is_tower then
                 status_str = "hostile"
@@ -1267,7 +1286,7 @@ function scan_neighbors(override_x, override_y)
             seen_entities[eff_key] = true
 
             local oname = is_tower and (site_owner and dfhack.translation.translateName(site_owner.name, true) or "Tower") or (eff_civ and dfhack.translation.translateName(eff_civ.name, true) or "unclaimed")
-            local orace = is_tower and "tower" or (eff_civ and format_entity_race(eff_civ) or "wilderness")
+            local orace = is_tower and "tower" or (eff_civ and format_entity_race(eff_civ, site) or "wilderness")
 
             if orace ~= "wilderness" and orace ~= "unknown" then
                 local sname = dfhack.translation.translateName(site.name, true)
@@ -1367,7 +1386,7 @@ end
 -- Draggable GUI window component
 EmbarkNeighbors = defclass(EmbarkNeighbors, widgets.Window)
 EmbarkNeighbors.ATTRS {
-    frame={w=136, h=27, l=2, t=2},
+    frame={w=112, h=27, l=2, t=2},
     draggable=true,
     drag_anchors={title=true, frame=true, body=false},
 }
@@ -1379,12 +1398,12 @@ function EmbarkNeighbors:init()
         return
     end
 
-    self.frame_title = string.format('neighbors [%.1f, %.1f] (drag to move)', data.world_x, data.world_y)
+    self.frame_title = string.format('neighbors [%d, %d] | [%s] %s', math.floor(data.world_x), math.floor(data.world_y), data.player_race, data.player_civ_name)
 
     local choices = {}
     for _, n in ipairs(data.entries) do
-        local line = string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
-            n.travel_str, n.rname, n.history_pop, n.est_pop, n.siege_str or '-', n.stype, n.sname)
+        local line = string.format('%-14.14s | %-15.15s | %-10.10s | %-8.8s | %-20.20s | %-12.12s | %s',
+            n.travel_str, n.rname, n.history_pop, n.est_pop, n.siege_str or '', n.stype, n.sname)
         table.insert(choices, {
             text={
                 {text=line, pen=n.status_pen}
@@ -1393,7 +1412,7 @@ function EmbarkNeighbors:init()
         })
     end
 
-    local site_lines = split_text_wrap(data.site_info_str, 120)
+    local site_lines = split_text_wrap(data.site_info_str, 96)
     local site_tokens = {
         {text='site:   ', pen=COLOR_GREY},
         {text=site_lines[1] or '', pen=COLOR_WHITE},
@@ -1405,7 +1424,7 @@ function EmbarkNeighbors:init()
 
     local urban_lines = {}
     if data.urban_info_str and #data.urban_info_str > 0 then
-        urban_lines = split_text_wrap(data.urban_info_str, 120)
+        urban_lines = split_text_wrap(data.urban_info_str, 96)
     end
 
     local top_y = #site_lines
@@ -1420,10 +1439,9 @@ function EmbarkNeighbors:init()
         top_y = top_y + urban_h
     end
 
-    local player_y = top_y
-    local legend_y = top_y + 1
-    local header_y = top_y + 3
-    local total_header_h = top_y + 4
+    local legend_y = top_y
+    local header_y = top_y + 2
+    local total_header_h = top_y + 3
 
     local subviews = {
         widgets.Label{
@@ -1455,13 +1473,6 @@ function EmbarkNeighbors:init()
     end
 
     table.insert(subviews, widgets.Label{
-        frame={t=player_y, l=0},
-        text={
-            {text='player: ', pen=COLOR_GREY},
-            {text='[' .. data.player_race .. '] ' .. data.player_civ_name, pen=COLOR_WHITE},
-        }
-    })
-    table.insert(subviews, widgets.Label{
         frame={t=legend_y, l=0},
         text={
             {text='legend: ', pen=COLOR_GREY},
@@ -1475,7 +1486,7 @@ function EmbarkNeighbors:init()
     table.insert(subviews, widgets.Label{
         frame={t=header_y, l=0},
         text={
-            {text=string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
+            {text=string.format('%-14.14s | %-15.15s | %-10.10s | %-8.8s | %-20.20s | %-12.12s | %s',
                 'travel', 'civ race', 'hist. pop', 'est. pop', 'sieges', 'site type', 'site name'), pen=COLOR_YELLOW},
         }
     })
@@ -1534,23 +1545,172 @@ function print_cli()
         qerror(err or 'error scanning neighbors')
     end
 
-    print('\n' .. string.rep('-', 120))
-    print(string.format('  neighbors at cursor: world [%.1f, %.1f]', data.world_x, data.world_y))
+    print('\n' .. string.rep('-', 108))
+    print(string.format('  neighbors at cursor: world [%d, %d]', math.floor(data.world_x), math.floor(data.world_y)))
     print(string.format('  playing as: [%s] %s', data.player_race, data.player_civ_name))
     print(string.format('  site:   %s', data.site_info_str))
-    print(string.rep('-', 120))
+    print(string.rep('-', 108))
 
-    print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
+    print(string.format('%-14.14s | %-15.15s | %-10.10s | %-8.8s | %-20.20s | %-12.12s | %s',
         'travel', 'civ race', 'hist. pop', 'est. pop', 'sieges', 'site type', 'site name'))
-    print(string.rep('-', 120))
+    print(string.rep('-', 108))
 
     for _, n in ipairs(data.entries) do
-        print(string.format('%-16.16s | %-20.20s | %-12.12s | %-8.8s | %-16.16s | %-14.14s | %s',
-            n.travel_str, n.rname, n.history_pop or '', n.est_pop or '', n.siege_str or '-', n.stype, n.sname))
+        print(string.format('%-14.14s | %-15.15s | %-10.10s | %-8.8s | %-20.20s | %-12.12s | %s',
+            n.travel_str, n.rname, n.history_pop or '', n.est_pop or '', n.siege_str or '', n.stype, n.sname))
     end
 
-    print(string.rep('-', 120) .. '\n')
+    print(string.rep('-', 108) .. '\n')
 end
+
+-- ---- overlay widget for choose_start_site ----------------------------------
+
+local PEN_TEXT = dfhack.pen.parse{fg = COLOR_WHITE, bg = COLOR_BLACK}
+local PEN_HEAD = dfhack.pen.parse{fg = COLOR_YELLOW, bg = COLOR_BLACK}
+local PEN_BLANK = dfhack.pen.parse{ch = 32, fg = COLOR_WHITE, bg = COLOR_BLACK}
+
+NeighborsOverlay = defclass(NeighborsOverlay, overlay.OverlayWidget)
+NeighborsOverlay.ATTRS{
+    desc = 'Tactical neighbors readout displayed during embark placement.',
+    default_enabled = true,
+    viewscreens = 'choose_start_site',
+    frame = {w = 1, h = 1},
+    overlay_onupdate_max_freq_seconds = 0.1,
+}
+
+local function is_embark_anywhere_active()
+    local cur_focus = dfhack.gui.getCurFocus()
+    if cur_focus then
+        for _, s in ipairs(cur_focus) do
+            if s:find('embark%-anywhere') then
+                return true
+            end
+        end
+    end
+    local cur_focus_force = dfhack.gui.getCurFocus(true)
+    if cur_focus_force then
+        for _, s in ipairs(cur_focus_force) do
+            if s:find('embark%-anywhere') then
+                return true
+            end
+        end
+    end
+    local p = dfhack.findScript('gui/embark-anywhere')
+    if p and dfhack.internal.scripts[p] then
+        local env = dfhack.internal.scripts[p].env
+        if env and env.view and env.view:isActive() then
+            return true
+        end
+    end
+    return false
+end
+
+local function is_embark_confirmation_active(scr)
+    if not scr then return false end
+    if scr.warn_mm_startx and scr.warn_mm_startx >= 0 then
+        return true
+    end
+    if scr.warn_flags then
+        if scr.warn_flags.GENERIC then return true end
+        for _, v in pairs(scr.warn_flags) do
+            if v == true then return true end
+        end
+    end
+    return false
+end
+
+function NeighborsOverlay:overlay_onupdate()
+    self.show = false
+    local scr = dfhack.gui.getDFViewscreen(true)
+    if not scr or not df.viewscreen_choose_start_sitest:is_instance(scr) then return end
+    if not scr.choosing_embark then return end
+    if scr.choosing_civilization or scr.choosing_reclaim or scr.doing_site_finder then return end
+
+    if is_embark_anywhere_active() or is_embark_confirmation_active(scr) then return end
+
+    local lo = scr.location.embark_pos_min
+    local hi = scr.location.embark_pos_max
+    if not lo or lo.x < 0 then return end
+
+    local key = string.format('%d:%d:%d:%d:%d', lo.x, lo.y, hi.x, hi.y, scr.selected_civ or -1)
+    if key ~= self.key then
+        self.key = key
+        local wx = math.floor(lo.x / 16)
+        local wy = math.floor(lo.y / 16)
+        local ok, data = pcall(scan_neighbors, wx, wy)
+        self.data = ok and data or nil
+    end
+    self.show = (self.data ~= nil)
+end
+
+function NeighborsOverlay:onRenderFrame(dc, rect)
+    if not self.show or not self.data then return end
+    local scr = dfhack.gui.getDFViewscreen(true)
+    if not scr or not df.viewscreen_choose_start_sitest:is_instance(scr) then return end
+    if not scr.choosing_embark then return end
+    if is_embark_anywhere_active() or is_embark_confirmation_active(scr) then return end
+    local gps = df.global.gps
+    if not gps then return end
+
+    local data = self.data
+    local lines = {}
+    local line_pens = {}
+
+    -- Title line
+    local title_str = string.format('neighbors [%d, %d] | [%s] %s', math.floor(data.world_x), math.floor(data.world_y), data.player_race, data.player_civ_name)
+    table.insert(lines, title_str)
+    table.insert(line_pens, PEN_HEAD)
+
+    -- Site line
+    local site_line = string.format('site: %s', data.site_info_str)
+    table.insert(lines, site_line)
+    table.insert(line_pens, PEN_TEXT)
+
+    -- Pop line if inhabited
+    if data.pop_info_str and data.pop_info_str ~= '0' then
+        table.insert(lines, string.format('pop:  %s', data.pop_info_str))
+        table.insert(line_pens, PEN_TEXT)
+    end
+
+    -- Column header
+    local col_hdr = string.format('%-14.14s | %-15.15s | %-10.10s | %-8.8s | %-20.20s | %-12.12s | %s',
+        'travel', 'civ race', 'hist. pop', 'est. pop', 'sieges', 'site type', 'site name')
+    table.insert(lines, col_hdr)
+    table.insert(line_pens, PEN_HEAD)
+
+    local max_entries = math.min(#data.entries, math.max(6, gps.dimy - #lines - 10))
+    for i = 1, max_entries do
+        local n = data.entries[i]
+        local row_str = string.format('%-14.14s | %-15.15s | %-10.10s | %-8.8s | %-20.20s | %-12.12s | %s',
+            n.travel_str, n.rname, n.history_pop or '', n.est_pop or '', n.siege_str or '', n.stype, n.sname)
+        table.insert(lines, row_str)
+        local pen = dfhack.pen.parse{fg = n.status_pen or COLOR_WHITE, bg = COLOR_BLACK}
+        table.insert(line_pens, pen)
+    end
+
+    local bw = 0
+    for _, l in ipairs(lines) do
+        bw = math.max(bw, #l)
+    end
+    bw = math.min(bw + 4, gps.dimx - 4)
+    local bh = #lines + 2
+
+    local tx = 2
+    local ty = math.max(1, gps.dimy - bh - 4)
+
+    local x2 = tx + bw - 1
+    local y2 = ty + bh - 1
+
+    dfhack.screen.fillRect(PEN_BLANK, tx, ty, x2, y2)
+    gui.paint_frame({x1 = 0, y1 = 0}, {x1 = tx, y1 = ty, x2 = x2, y2 = y2}, gui.FRAME_INTERIOR_MEDIUM)
+
+    for i, line in ipairs(lines) do
+        local pen = line_pens[i] or PEN_TEXT
+        dfhack.screen.paintString(pen, tx + 2, ty + i, line:sub(1, bw - 4))
+    end
+end
+
+OVERLAY_WIDGETS = {tooltip = NeighborsOverlay}
 
 function main(...)
     local args = {...}
