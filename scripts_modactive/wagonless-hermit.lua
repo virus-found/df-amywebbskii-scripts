@@ -42,18 +42,26 @@ end
 
 local function clean_loose_wagon_logs(wagon_positions)
     local count = 0
-    if not wagon_positions or #wagon_positions == 0 then return 0 end
     local items = df.global.world and df.global.world.items and df.global.world.items.all
     if items then
         for i = #items - 1, 0, -1 do
             local item = items[i]
-            if item and df.item_woodst:is_instance(item) and not item.flags.in_inventory and not item.flags.in_building then
-                for _, wp in ipairs(wagon_positions) do
-                    if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 4 and math.abs(item.pos.y - wp.y) <= 4 then
-                        purge_item_and_contents(item)
-                        count = count + 1
-                        break
+            if item and df.item_woodst:is_instance(item) and not item.flags.in_building then
+                local should_remove = false
+                if wagon_positions and #wagon_positions > 0 then
+                    for _, wp in ipairs(wagon_positions) do
+                        if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 10 and math.abs(item.pos.y - wp.y) <= 10 then
+                            should_remove = true
+                            break
+                        end
                     end
+                else
+                    -- on a fresh embark, any loose wood logs on the map originate from wagon breakdown
+                    should_remove = true
+                end
+                if should_remove then
+                    purge_item_and_contents(item)
+                    count = count + 1
                 end
             end
         end
@@ -233,11 +241,15 @@ function apply_no_wagon(force)
 
     -- 4. clean immediate corpses/announcements near wagon
     clean_corpses_and_announcements(wagon_positions)
-    dfhack.timeout(1, 'ticks', function() clean_corpses_and_announcements(wagon_positions) end)
-    dfhack.timeout(2, 'ticks', function() clean_corpses_and_announcements(wagon_positions) end)
-    dfhack.timeout(5, 'ticks', function() clean_corpses_and_announcements(wagon_positions) end)
-    dfhack.timeout(10, 'ticks', function() clean_corpses_and_announcements(wagon_positions) end)
-    dfhack.timeout(20, 'ticks', function() clean_corpses_and_announcements(wagon_positions) end)
+    local function clean_delayed()
+        clean_loose_wagon_logs(wagon_positions)
+        clean_corpses_and_announcements(wagon_positions)
+    end
+    dfhack.timeout(1, 'ticks', clean_delayed)
+    dfhack.timeout(2, 'ticks', clean_delayed)
+    dfhack.timeout(5, 'ticks', clean_delayed)
+    dfhack.timeout(10, 'ticks', clean_delayed)
+    dfhack.timeout(20, 'ticks', clean_delayed)
 
     dfhack.persistent.saveSiteData(GLOBAL_KEY, {applied = true})
 
