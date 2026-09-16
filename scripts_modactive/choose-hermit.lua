@@ -1,7 +1,7 @@
 --[====[
 
-choose_your_hermit (better startdwarf)
-======================================
+choose_your_hermit
+==================
 
 an interactive gui & auto-embark selector that allows you to choose your solo hermit settler at the start of a fortress.
 
@@ -83,20 +83,24 @@ local function is_our_embark_colonist(u, fort_hfig_set)
     if u.flags1.tame or u.flags1.merchant or u.flags1.diplomat or u.flags2.visitor then return false end
     if not u.status or not u.status.current_soul then return false end
 
+    -- Site inhabitants, residents, invaders, or underworld creatures are NEVER starting embark colonists!
+    if u.flags2.resident then return false end
+    if u.flags1.invader_origin or u.flags1.active_invader or u.flags1.marauder or u.flags2.underworld then return false end
+
+    -- Colonist must belong to player's civ or fortress group
+    local p_civ = df.global.plotinfo and df.global.plotinfo.civ_id
+    local p_grp = df.global.plotinfo and df.global.plotinfo.group_id
+    if p_civ and u.civ_id ~= p_civ and (not p_grp or u.civ_id ~= p_grp) then
+        return false
+    end
+
     -- 1. check fortress entity histfig membership
     if fort_hfig_set and u.hist_figure_id and u.hist_figure_id >= 0 and fort_hfig_set[u.hist_figure_id] then
         return true
     end
 
-    -- 2. check fort control or citizenship or own civ or own group
-    if dfhack.units.isFortControlled(u) or dfhack.units.isCitizen(u, true) or dfhack.units.isOwnCiv(u) or dfhack.units.isOwnGroup(u) then
-        return true
-    end
-
-    -- 3. check civ_id matching player's civ or fortress group
-    local p_civ = df.global.plotinfo and df.global.plotinfo.civ_id
-    local p_grp = df.global.plotinfo and df.global.plotinfo.group_id
-    if (p_civ and u.civ_id == p_civ) or (p_grp and u.civ_id == p_grp) then
+    -- 2. check fort control and citizenship
+    if dfhack.units.isFortControlled(u) and (dfhack.units.isCitizen(u, true) or dfhack.units.isOwnCiv(u) or dfhack.units.isOwnGroup(u)) then
         return true
     end
 
@@ -950,22 +954,7 @@ function apply_hermit(target_unit)
         end
     end
 
-    -- 2. sweep all companion dwarves of the player's race on map
-    if df.global.world and df.global.world.units and df.global.world.units.all then
-        for _, u in ipairs(df.global.world.units.all) do
-            if u and not processed_ids[u.id] and u.id ~= target_unit.id then
-                if u.race == target_unit.race and not u.flags1.merchant and not u.flags1.diplomat and not u.flags2.visitor then
-                    processed_ids[u.id] = true
-                    table.insert(removed_units, u)
-                    if purge_companion_unit(u, fort_entity, civ_entity, removed_u_ids, removed_hf_ids, removed_item_ids) then
-                        removed_count = removed_count + 1
-                    end
-                end
-            end
-        end
-    end
-
-    -- 0. erase removed companion units from active units list so Pop counter and UI update immediately
+    -- 2. erase removed companion units from active units list so Pop counter and UI update immediately
     local active_units = df.global.world and df.global.world.units and df.global.world.units.active
     if active_units then
         local removed_u_map = {}
@@ -974,7 +963,7 @@ function apply_hermit(target_unit)
         end
         for i = #active_units - 1, 0, -1 do
             local u = active_units[i]
-            if u and (removed_u_map[u.id] or (u.race == target_unit.race and u.id ~= target_unit.id and not u.flags1.merchant and not u.flags1.diplomat and not u.flags2.visitor)) then
+            if u and removed_u_map[u.id] then
                 active_units:erase(i)
             end
         end
@@ -1012,8 +1001,8 @@ end
 -- interactive hermit selection UI window
 ChooseHermitWindow = defclass(ChooseHermitWindow, widgets.Window)
 ChooseHermitWindow.ATTRS {
-    frame_title='choose your solo hermit (better startdwarf)',
-    frame={w=108, h=54, l=2, t=2},
+    frame_title='choose your solo hermit',
+    frame={w=84, h=54, l=2, t=2},
     draggable=true,
     drag_anchors={title=true, frame=true, body=false},
 }
@@ -1065,7 +1054,7 @@ function ChooseHermitWindow:init()
             end
         end
 
-        local line = string.format("[%d] %-14.14s | %-12.12s | stress:%-2d | will:%-4d | brave:%-2d | cheer:%-2d",
+        local line = string.format("[%d] %-11.11s | %-12.12s | stress:%-2d | will:%-4d | brave:%-2d | cheer:%-3d",
             idx, first_name, bio_str, stress_vuln, willpower, bravery, cheer)
 
         table.insert(choices, {
@@ -1078,7 +1067,7 @@ function ChooseHermitWindow:init()
     local header_subviews = {
         widgets.WrappedLabel{
             frame={t=0, l=0, r=0},
-            text_to_wrap='select which dwarf will be your sole hermit settler (better startdwarf). all other starting expedition dwarves will be cleanly removed without relationship grief or labor matrix corruption.',
+            text_to_wrap='select which dwarf will be your sole hermit settler. all other starting expedition dwarves will be cleanly removed without relationship grief or labor matrix corruption.',
         },
         widgets.Label{
             frame={t=2, l=0},
