@@ -78,7 +78,7 @@ local function clean_corpses_and_announcements(wagon_positions)
                 local item = items[i]
                 if item and (df.item_corpsest:is_instance(item) or df.item_corpsepiecest:is_instance(item)) then
                     for _, wp in ipairs(wagon_positions) do
-                        if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 5 and math.abs(item.pos.y - wp.y) <= 5 then
+                        if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 25 and math.abs(item.pos.y - wp.y) <= 25 then
                             purge_item_and_contents(item)
                             break
                         end
@@ -97,7 +97,7 @@ local function clean_corpses_and_announcements(wagon_positions)
                 for i = #announcements - 1, 0, -1 do
                     local a = announcements[i]
                     local text = a and a.text or ""
-                    if text:find("has been found dead") or text:find("Cauchemar") or text:find("Horse") or text:find("Yak") or text:find("Mule") or text:find("Ox") or text:find("Water buffalo") then
+                    if text:find("has been found dead") or text:find("Cauchemar") or text:find("Horse") or text:find("Yak") or text:find("Mule") or text:find("Ox") or text:find("Water buffalo") or text:find("Hippogriff") then
                         announcements:erase(i)
                     end
                 end
@@ -108,7 +108,7 @@ local function clean_corpses_and_announcements(wagon_positions)
                 for i = #reports - 1, 0, -1 do
                     local r = reports[i]
                     local text = r and r.text or ""
-                    if text:find("has been found dead") or text:find("Cauchemar") or text:find("Horse") or text:find("Yak") or text:find("Mule") or text:find("Ox") or text:find("Water buffalo") then
+                    if text:find("has been found dead") or text:find("Cauchemar") or text:find("Horse") or text:find("Yak") or text:find("Mule") or text:find("Ox") or text:find("Water buffalo") or text:find("Hippogriff") then
                         reports:erase(i)
                     end
                 end
@@ -133,10 +133,11 @@ local function vaporize_unit(unit)
         end
     end
 
-    -- 2. set blood count to 0 and vanish countdown so df engine clears the unit
-    unit.body.blood_count = 0
+    -- 2. vanish animal cleanly without triggering blood-loss corpse generation
     unit.flags2.slaughter = false
     unit.flags2.killed = false
+    unit.flags1.inactive = true
+    unit.flags1.left = true
     if unit.animal then
         unit.animal.vanish_countdown = 1
     else
