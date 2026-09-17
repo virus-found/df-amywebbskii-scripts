@@ -991,9 +991,6 @@ function apply_hermit(target_unit)
     print(msg)
     dfhack.gui.showAnnouncement(msg, COLOR_GREEN)
 
-    -- gracefully invoke companion hermit tools if installed
-    safe_run_command('enable', 'hermit')
-    safe_run_command('wagonless-hermit')
     df.global.pause_state = true
     return true
 end
@@ -1156,6 +1153,8 @@ function ChooseHermitWindow:confirm_selection(choice)
     end
 
     if target_unit then
+        local kept_name = (target_unit.name.first_name and #target_unit.name.first_name > 0)
+            and target_unit.name.first_name:lower() or "hermit"
         local ok, err = pcall(function() apply_hermit(target_unit) end)
         if not ok then
             dfhack.printerr('choose-your-hermit error: ' .. tostring(err))
@@ -1163,6 +1162,7 @@ function ChooseHermitWindow:confirm_selection(choice)
         if self.parent_view and self.parent_view.dismiss then
             self.parent_view:dismiss()
         end
+        HermitRecommendationsScreen{kept_name=kept_name}:show()
     else
         dfhack.printerr('choose-your-hermit: no unit selected to confirm')
     end
@@ -1174,6 +1174,136 @@ function ChooseHermitWindow:onInput(keys)
         return true
     end
     return ChooseHermitWindow.super.onInput(self, keys)
+end
+
+-- interactive post-embark recommendation dialog
+HermitRecommendationsWindow = defclass(HermitRecommendationsWindow, widgets.Window)
+HermitRecommendationsWindow.ATTRS {
+    frame_title='solo hermit setup',
+    frame={w=54, h=11, l=2, t=2},
+    draggable=true,
+    drag_anchors={title=true, frame=true, body=false},
+    kept_name=DEFAULT_NIL,
+}
+
+function HermitRecommendationsWindow:init()
+    self.hermit_enabled = false
+    self.wagonless_executed = false
+
+    self:addviews{
+        widgets.Label{
+            frame={t=0, l=1},
+            text={
+                {text="kept '", pen=COLOR_GREY},
+                {text=tostring(self.kept_name or 'hermit'), pen=COLOR_WHITE},
+                {text="' as solo hermit.", pen=COLOR_GREY},
+            },
+        },
+        widgets.Label{
+            frame={t=2, l=1},
+            text='recommended for solo hermit mode:',
+            text_pen=COLOR_LIGHTCYAN,
+        },
+        widgets.HotkeyLabel{
+            view_id='opt_hermit',
+            frame={t=4, l=1},
+            key='CUSTOM_H',
+            key_sep=' ',
+            label=function()
+                return (self.hermit_enabled and '[x] ' or '[ ] ') .. 'enable hermit'
+            end,
+            auto_width=true,
+            on_activate=function()
+                self:toggle_hermit()
+            end,
+        },
+        widgets.HotkeyLabel{
+            view_id='opt_wagonless',
+            frame={t=5, l=1},
+            key='CUSTOM_W',
+            key_sep=' ',
+            label=function()
+                return (self.wagonless_executed and '[x] ' or '[ ] ') .. 'execute wagonless-hermit'
+            end,
+            auto_width=true,
+            on_activate=function()
+                self:toggle_wagonless()
+            end,
+        },
+        widgets.HotkeyLabel{
+            frame={t=7, l=1},
+            key='LEAVESCREEN',
+            key_sep=' = ',
+            label='close',
+            auto_width=true,
+            on_activate=function()
+                self:close_dialog()
+            end,
+        },
+    }
+end
+
+function HermitRecommendationsWindow:toggle_hermit()
+    self.hermit_enabled = not self.hermit_enabled
+    if self.hermit_enabled then
+        safe_run_command('enable', 'hermit')
+        dfhack.gui.showAnnouncement('enabled hermit plugin', COLOR_GREEN)
+    else
+        safe_run_command('disable', 'hermit')
+        dfhack.gui.showAnnouncement('disabled hermit plugin', COLOR_YELLOW)
+    end
+    df.global.pause_state = true
+end
+
+function HermitRecommendationsWindow:toggle_wagonless()
+    if not self.wagonless_executed then
+        self.wagonless_executed = true
+        safe_run_command('wagonless-hermit')
+        dfhack.gui.showAnnouncement('executed wagonless-hermit', COLOR_GREEN)
+    else
+        self.wagonless_executed = false
+    end
+    df.global.pause_state = true
+end
+
+function HermitRecommendationsWindow:close_dialog()
+    df.global.pause_state = true
+    if self.parent_view and self.parent_view.dismiss then
+        self.parent_view:dismiss()
+    end
+end
+
+function HermitRecommendationsWindow:onInput(keys)
+    if keys.LEAVESCREEN then
+        self:close_dialog()
+        return true
+    end
+    return HermitRecommendationsWindow.super.onInput(self, keys)
+end
+
+HermitRecommendationsScreen = defclass(HermitRecommendationsScreen, gui.ZScreen)
+HermitRecommendationsScreen.ATTRS {
+    focus_path='choose-hermit/recommendations',
+    pass_movement_keys=false,
+    force_pause=true,
+    kept_name=DEFAULT_NIL,
+}
+
+function HermitRecommendationsScreen:init()
+    self:addviews{
+        HermitRecommendationsWindow{
+            view_id='main',
+            kept_name=self.kept_name,
+        },
+    }
+end
+
+function HermitRecommendationsScreen:onDismiss()
+    df.global.pause_state = true
+end
+
+function HermitRecommendationsScreen:onDestroy()
+    df.global.pause_state = true
 end
 
 ChooseHermitScreen = defclass(ChooseHermitScreen, gui.ZScreen)
