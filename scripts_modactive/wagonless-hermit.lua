@@ -69,18 +69,20 @@ local function clean_loose_wagon_logs(wagon_positions)
     return count
 end
 
-local function clean_corpses_and_announcements(wagon_positions)
-    -- 1. remove only corpse items resulting from wagon pack animals near wagon positions
-    if wagon_positions and #wagon_positions > 0 then
+local function clean_corpses_and_announcements(wagon_positions, draft_races)
+    -- 1. remove only corpse items resulting from removed draft animals near wagon positions
+    if wagon_positions and #wagon_positions > 0 and draft_races and next(draft_races) then
         local items = df.global.world and df.global.world.items and df.global.world.items.all
         if items then
             for i = #items - 1, 0, -1 do
                 local item = items[i]
                 if item and (df.item_corpsest:is_instance(item) or df.item_corpsepiecest:is_instance(item)) then
-                    for _, wp in ipairs(wagon_positions) do
-                        if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 25 and math.abs(item.pos.y - wp.y) <= 25 then
-                            purge_item_and_contents(item)
-                            break
+                    if draft_races[item.race] then
+                        for _, wp in ipairs(wagon_positions) do
+                            if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 10 and math.abs(item.pos.y - wp.y) <= 10 then
+                                purge_item_and_contents(item)
+                                break
+                            end
                         end
                     end
                 end
@@ -144,6 +146,48 @@ local function vaporize_unit(unit)
         unit.flags2.killed = true
         dfhack.units.teleport(unit, {x = 0, y = 0, z = 0})
     end
+end
+
+local function is_embark_draft_animal(u, wagon_positions)
+    if not u or dfhack.units.isDead(u) then return false end
+    if dfhack.units.isCitizen(u, true) then return false end
+
+    -- must strictly belong to player fortress civilization
+    local p_civ = df.global.plotinfo and df.global.plotinfo.civ_id
+    if not p_civ or u.civ_id ~= p_civ or not dfhack.units.isOwnCiv(u) then
+        return false
+    end
+
+    -- foreign/site inhabitants, residents, invaders, or underworld creatures are never embark pack animals
+    if u.flags2.resident or u.flags2.visitor then return false end
+    if u.flags1.merchant or u.flags1.diplomat then return false end
+    if u.flags1.invader_origin or u.flags1.active_invader or u.flags1.marauder or u.flags2.underworld then
+        return false
+    end
+
+    -- must be domestic / tame animal
+    if not (dfhack.units.isTame(u) or u.flags1.tame or u.training_level == df.animal_training_level.Domesticated) then
+        return false
+    end
+
+    -- proximity to embark wagon (if wagon present)
+    if wagon_positions and #wagon_positions > 0 then
+        for _, wp in ipairs(wagon_positions) do
+            if u.pos.z == wp.z and math.abs(u.pos.x - wp.x) <= 10 and math.abs(u.pos.y - wp.y) <= 10 then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- fallback when wagon is already deconstructed: verify caste pack animal / wagon puller flag
+    local craw = df.creature_raw.find(u.race)
+    local caste = craw and craw.caste and craw.caste[u.caste]
+    if caste and (caste.flags.WAGON_PULLER or caste.flags.PACK_ANIMAL or caste.flags.COMMON_DOMESTIC) then
+        return true
+    end
+
+    return false
 end
 
 function apply_no_wagon(force)
@@ -211,6 +255,7 @@ function apply_no_wagon(force)
     end
 
     -- 2. erase wagon units & draft/pack animals (only if wagon present or near wagon)
+    local draft_races = {}
     for i = #df.global.world.units.active - 1, 0, -1 do
         local u = df.global.world.units.active[i]
         if u and not dfhack.units.isDead(u) then
@@ -220,19 +265,10 @@ function apply_no_wagon(force)
             if cid == "EQUIPMENT_WAGON" or cid == "WAGON" then
                 vaporize_unit(u)
                 wagons_removed = wagons_removed + 1
-            elseif #wagon_positions > 0 and not dfhack.units.isCitizen(u) and (dfhack.units.isTame(u) or u.civ_id == df.global.plotinfo.civ_id) then
-                -- domestic draft animals brought with embark wagon
-                local near_wagon = false
-                for _, wp in ipairs(wagon_positions) do
-                    if u.pos.z == wp.z and math.abs(u.pos.x - wp.x) <= 10 and math.abs(u.pos.y - wp.y) <= 10 then
-                        near_wagon = true
-                        break
-                    end
-                end
-                if near_wagon then
-                    vaporize_unit(u)
-                    draft_animals_removed = draft_animals_removed + 1
-                end
+            elseif is_embark_draft_animal(u, wagon_positions) then
+                draft_races[u.race] = true
+                vaporize_unit(u)
+                draft_animals_removed = draft_animals_removed + 1
             end
         end
     end
@@ -241,10 +277,10 @@ function apply_no_wagon(force)
     logs_removed = clean_loose_wagon_logs(wagon_positions)
 
     -- 4. clean immediate corpses/announcements near wagon
-    clean_corpses_and_announcements(wagon_positions)
+    clean_corpses_and_announcements(wagon_positions, draft_races)
     local function clean_delayed()
         clean_loose_wagon_logs(wagon_positions)
-        clean_corpses_and_announcements(wagon_positions)
+        clean_corpses_and_announcements(wagon_positions, draft_races)
     end
     dfhack.timeout(1, 'ticks', clean_delayed)
     dfhack.timeout(2, 'ticks', clean_delayed)
@@ -259,6 +295,7 @@ function apply_no_wagon(force)
     print(msg)
     return true, msg
 end
+
 
 dfhack.onStateChange[GLOBAL_KEY] = function(sc)
     if sc == SC_MAP_LOADED and df.global.gamemode == df.game_mode.DWARF then
