@@ -673,12 +673,15 @@ end
 
 -- completely removes wagon buildings without spawning material logs and wipes all loose wood logs on embark
 local function clean_wagon_and_loose_wood()
+    local wagon_positions = {}
+
     -- 1. Erase wagon buildings (df.building_wagonst)
     local buildings = df.global.world and df.global.world.buildings and df.global.world.buildings.all
     if buildings then
         for i = #buildings - 1, 0, -1 do
             local bld = buildings[i]
             if df.building_wagonst:is_instance(bld) then
+                table.insert(wagon_positions, {x = bld.centerx, y = bld.centery, z = bld.z})
                 if bld.contained_items then
                     for j = #bld.contained_items - 1, 0, -1 do
                         local bitem = bld.contained_items[j]
@@ -723,23 +726,32 @@ local function clean_wagon_and_loose_wood()
                 local craw = df.creature_raw.find(u.race)
                 local cid = craw and craw.creature_id or ""
                 if cid == "EQUIPMENT_WAGON" or cid == "WAGON" then
-                    u.body.blood_count = 0
-                    u.flags1.dead = true
+                    u.flags1.inactive = true
                     u.flags1.left = true
-                    u.flags2.visitor = true
                     if u.animal then u.animal.vanish_countdown = 1 end
                 end
             end
         end
     end
 
-    -- 3. Delete any loose wood logs that resulted from wagon placement or deconstruction
+    -- 3. Delete any loose wood logs that resulted from wagon placement or deconstruction near wagon
     local items = df.global.world and df.global.world.items and df.global.world.items.all
     if items then
         for i = #items - 1, 0, -1 do
             local item = items[i]
-            if item and df.item_woodst:is_instance(item) then
-                purge_item_and_contents(item)
+            if item and df.item_woodst:is_instance(item) and not item.flags.in_building then
+                local should_remove = false
+                if wagon_positions and #wagon_positions > 0 then
+                    for _, wp in ipairs(wagon_positions) do
+                        if item.pos.z == wp.z and math.abs(item.pos.x - wp.x) <= 10 and math.abs(item.pos.y - wp.y) <= 10 then
+                            should_remove = true
+                            break
+                        end
+                    end
+                end
+                if should_remove then
+                    purge_item_and_contents(item)
+                end
             end
         end
     end
