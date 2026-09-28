@@ -882,6 +882,25 @@ local TOOLS = {
         end,
     },
     {
+        key = 'fix-reaction-indices',
+        name = 'fix reaction indices',
+        cmd = 'fix-reaction-indices',
+        category = 'dfhack script',
+        patch_type = 'dfhack script',
+        load_order = 'n/a',
+        game_restart = 'not required',
+        new_world = 'not required',
+        desc = 'sanitizes civilization and fortress entity reaction lists to remove out-of-bounds or null reaction pointers, preventing v50 item sheet SIGSEGV crashes on tile clicks. fixes df bug 13552 (https://dwarffortressbugtracker.com/view.php?id=13552).',
+        enable = function()
+            if not dfhack.isMapLoaded() then return end
+            pcall(dfhack.run_command, 'fix-reaction-indices', '--quiet')
+        end,
+        disable = function() end,
+        run = function()
+            dfhack.run_command('fix-reaction-indices', '--force')
+        end,
+    },
+    {
         key = 'early-sieges',
         name = 'early sieges',
         category = 'bundle module',
